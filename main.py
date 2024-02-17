@@ -18,7 +18,7 @@ if __name__ == "__main__":
     print(f"number of input images: {len(rgbimgs)}")
 
     for rgbimg in tqdm(rgbimgs, position=0):
-        print(redemosaic(torch.tensor(rgbimg, dtype=torch.uint8, device=device), device=device).size())
+        redemosaic(torch.tensor(rgbimg, dtype=torch.uint8, device=device), device=device).size()
     
 
     # calculate RGB mask to reuse in both mosaic() and demosaic()
