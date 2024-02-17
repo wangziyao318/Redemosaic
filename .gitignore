@@ -1,0 +1,22 @@
+# Mac
+.DS_Store
+
+# Latex
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+.latexmkrc
+_minted-*
+*.bbl
+*.blg
+
+# Python
+__pycache__
+.venv
+
+# Dataset
+*.TIF
+*.tif
