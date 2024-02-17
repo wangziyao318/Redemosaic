@@ -25,7 +25,7 @@ def redemosaic(
         [-1, 2, 4, 2, -1],
         [0, 0, 2, 0, 0],
         [0, 0, -1, 0, 0]
-    ], dtype=torch.float32, device=device) / 8
+    ], dtype=torch.float16, device=device) / 8
 
     Rg_RB_Bg_BR = torch.tensor([
         [0, 0, 0.5, 0, 0],
@@ -33,7 +33,7 @@ def redemosaic(
         [-1, 4, 5, 4, -1],
         [0, -1, 0, -1, 0],
         [0, 0, 0.5, 0, 0]
-    ], dtype=torch.float32, device=device) / 8
+    ], dtype=torch.float16, device=device) / 8
 
     Rg_BR_Bg_RB = torch.t(Rg_RB_Bg_BR)
 
@@ -43,15 +43,15 @@ def redemosaic(
         [-1.5, 0, 6, 0, -1.5],
         [0, 2, 0, 2, 0],
         [0, 0, -1.5, 0, 0]
-    ], dtype=torch.float32, device=device) / 8
+    ], dtype=torch.float16, device=device) / 8
     
     basic_masks = torch.zeros([4, rgbimg.size(0), rgbimg.size(1)], dtype=torch.bool, device=device)
     for basic_mask, (i, j) in zip(basic_masks, [(0, 0), (0, 1), (1, 0), (1, 1)]):
         for x in basic_mask[i::2]: x[j::2] = 1
 
     rgbmasks_bayerpatterns = torch.zeros([4, 3, rgbimg.size(0), rgbimg.size(1)], dtype=torch.bool, device=device)
-    rgb_bayerpatterns = torch.zeros_like(rgbmasks_bayerpatterns, dtype=torch.float32, device=device)
-    cfa_bayerpatterns = torch.zeros([4, rgbimg.size(0), rgbimg.size(1)], dtype=torch.float32, device=device)
+    rgb_bayerpatterns = torch.zeros_like(rgbmasks_bayerpatterns, dtype=torch.float16, device=device)
+    cfa_bayerpatterns = torch.zeros([4, rgbimg.size(0), rgbimg.size(1)], dtype=torch.float16, device=device)
     for rgbmasks, rgb, bayer_pattern, i in zip(rgbmasks_bayerpatterns, rgb_bayerpatterns, bayer_patterns, [0,1,2,3]):
         rgbmasks[0] = basic_masks[bayer_pattern.find("r")]
         rgb[0] = rgbimg[:,:,0] * rgbmasks[0]
