@@ -1,3 +1,6 @@
 numpy
 scikit-image
+imagecodecs
+opencv-python
 torch
+tqdm

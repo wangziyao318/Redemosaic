@@ -1,6 +1,5 @@
 import numpy as np
 import cv2 as cv
-import time
 
 # return RGB mask given pattern, taken from colour_demosaicing
 def bayer_mask(shape, pattern):
@@ -95,27 +94,25 @@ def demosaic(cfaimg, pattern):
 
     del RBg_RBBR, RBg_BRRB, RBgr_BBRR, R_r, R_c, B_r, B_c
 
-    # remove values out of bonds (0-255) and use BGR arrangement for imwrite
-    return np.stack((np.clip(B, 0, 255), np.clip(G, 0, 255), np.clip(R, 0, 255)), axis=2, dtype=np.uint8, casting="unsafe")
+    # remove values out of bonds (0-255) and return RGB
+    return np.stack((np.clip(R, 0, 255), np.clip(G, 0, 255), np.clip(B, 0, 255)), axis=2, dtype=np.uint8, casting="unsafe")
 
 
 
 if __name__ == "__main__":
-    start = time.time()
+
     print("opencv implementation")
     #TODO iterate sensor alignment
     pattern = "bggr"
 
     # convert opencv default BGR arrangement to RGB
-    rgbimg = cv.imread("./1.tif")[:,:,[2,1,0]]
-    print("imread\t {:.3f}s".format(time.time()-start))
+    rgbimg = cv.imread("img/r0a2e85f0t.TIF")[:,:,[2,1,0]]
+
 
     cfaimg = mosaic(rgbimg, pattern)
-    print("mosaic\t {:.3f}s".format(time.time()-start))
 
-    # newimg in BGR arrangement
+
+    # newimg in RGB
     newimg = demosaic(cfaimg, pattern)
-    print("demosaic {:.3f}s".format(time.time()-start))
 
-    cv.imwrite("new-cv.tif", newimg)
-    print("imwrite\t {:.3f}s".format(time.time()-start))
+    cv.imwrite("output/1.tif", newimg[:,:,[2,1,0]])

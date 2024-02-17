@@ -1,37 +1,21 @@
-from skimage import io
 import torch
-import time
-
-# return RGB mask given pattern
-def bayer_mask(rgbimgs, patterns):
-
-    masks = torch.zeros([len(rgbimgs), len(patterns, )], dtype=torch.bool)
-
-    for rgbimg in rgbimgs:
-
-        print("hello")
 
 
+def redemosaic(
+        rgbimg: torch.Tensor,
+        bayer_patterns: list[str] = ["gbrg", "grbg", "bggr", "rggb"],
+        device: torch.device = torch.device("cpu")
+    ) -> torch.Tensor:
+    """
+    The function creates redemosaiced images of any Bayer patterns given rgbimage.
+    
+    Default Bayer patterns: ["gbrg", "grbg", "bggr", "rggb"]
 
-    # # init dict object channels contain "r", "g", and "b" with same input shape
-    # channels = {channel: torch.zeros([size[0], size[1]], dtype=torch.bool, device=device) for channel in "rgb"}
-
-    # for channel, (y, x) in zip(pattern, [(0, 0), (0, 1), (1, 0), (1, 1)]):
-    #     # not a good implementation, but channels[channel][y::2][x::2]=1 not work
-    #     for col in channels[channel][y::2]:
-    #         col[x::2] = 1
-
-    # return tuple(channels.values())
-    return 0,1,2
-
-# mosaic
-def mosaic(rgbimg, R_m, G_m, B_m):
-    return rgbimg[:,:,0] * R_m + rgbimg[:,:,1] * G_m + rgbimg[:,:,2] * B_m
-
-# demosaic
-def demosaic(cfaimg, R_m, G_m, B_m):
-    # [None, None, ...] equivalent to .unsqueeze(0).unsqueeze(0)
-    cfaimg = cfaimg.float()[None, None, ...]
+    Default device: "cpu"
+    """
+    assert isinstance(rgbimg, torch.Tensor)
+    assert isinstance(bayer_patterns, list)
+    assert isinstance(device, torch.device)
 
     GR_GB = torch.tensor(
         [
@@ -39,7 +23,7 @@ def demosaic(cfaimg, R_m, G_m, B_m):
             [0, 0, 2, 0, 0],
             [-1, 2, 4, 2, -1],
             [0, 0, 2, 0, 0],
-            [0, 0, -1, 0, 0],
+            [0, 0, -1, 0, 0]
         ], dtype=torch.float32, device=device
     ) / 8
 
@@ -49,7 +33,7 @@ def demosaic(cfaimg, R_m, G_m, B_m):
             [0, -1, 0, -1, 0],
             [-1, 4, 5, 4, -1],
             [0, -1, 0, -1, 0],
-            [0, 0, 0.5, 0, 0],
+            [0, 0, 0.5, 0, 0]
         ], dtype=torch.float32, device=device
     ) / 8
 
@@ -61,77 +45,72 @@ def demosaic(cfaimg, R_m, G_m, B_m):
             [0, 2, 0, 2, 0],
             [-1.5, 0, 6, 0, -1.5],
             [0, 2, 0, 2, 0],
-            [0, 0, -1.5, 0, 0],
+            [0, 0, -1.5, 0, 0]
         ], dtype=torch.float32, device=device
     ) / 8
+    
+    """
+    mosaic() creates RGB masks of 4 Bayer patterns given rgbimg.
 
-    R = cfaimg * R_m[None, None, ...]
-    G = cfaimg * G_m[None, None, ...]
-    B = cfaimg * B_m[None, None, ...]
+    Return: (4, 3, L, W)
+    """
+    basic_masks = torch.zeros([4, rgbimg.size(0), rgbimg.size(1)], dtype=torch.bool, device=device)
+    for basic_mask, (i, j) in zip(basic_masks, [(0, 0), (0, 1), (1, 0), (1, 1)]):
+        for x in basic_mask[i::2]: x[j::2] = 1
 
-    # calculate bilinear G value at all R and B locations
-    G = torch.where(torch.logical_or(R_m == 1, B_m == 1), torch.conv2d(torch.nn.ReflectionPad2d(2)(cfaimg), GR_GB[None, None, ...]), G)
+    # note that rgb and cfa is in dtype.float32
+    rgbmasks_bayerpatterns = torch.zeros([4, 3, rgbimg.size(0), rgbimg.size(1)], dtype=torch.bool, device=device)
+    rgb_bayerpatterns = torch.zeros_like(rgbmasks_bayerpatterns, dtype=torch.float32, device=device)
+    cfa_bayerpatterns = torch.zeros([4, rgbimg.size(0), rgbimg.size(1)], dtype=torch.float32, device=device)
+    for rgbmasks, rgb, bayer_pattern, i in zip(rgbmasks_bayerpatterns, rgb_bayerpatterns, bayer_patterns, [0,1,2,3]):
+        rgbmasks[0] = basic_masks[bayer_pattern.find("r")]
+        rgb[0] = rgbimg[:,:,0] * rgbmasks[0]
+        rgbmasks[1] = (basic_masks[bayer_pattern.find("g")] + basic_masks[bayer_pattern.rfind("g")])
+        rgb[1] = rgbimg[:,:,1] * rgbmasks[1]
+        rgbmasks[2] = basic_masks[bayer_pattern.find("b")]
+        rgb[2] = rgbimg[:,:,2] * rgbmasks[2]
+        cfa_bayerpatterns[i] = rgb[0] + rgb[1] + rgb[2]
 
-    RBg_RBBR = torch.conv2d(torch.nn.ReflectionPad2d(2)(cfaimg), Rg_RB_Bg_BR[None, None, ...])
-    RBg_BRRB = torch.conv2d(torch.nn.ReflectionPad2d(2)(cfaimg), Rg_BR_Bg_RB[None, None, ...])
-    RBgr_BBRR = torch.conv2d(torch.nn.ReflectionPad2d(2)(cfaimg), Rb_BB_Br_RR[None, None, ...])
+    del basic_masks
+
+    """
+    demosaic() creates 4 demosaiced images given rgbimg and RGB masks of 4 Bayer patterns.
+
+    Return: (4, L, W, 3)
+    """
+    # Gradient-corrected bilinear interpolated G at all R and B.
+    rgb_bayerpatterns[:,1,:,:] = torch.where(
+        torch.logical_or(rgbmasks_bayerpatterns[:,0,:,:] == 1, rgbmasks_bayerpatterns[:,2,:,:] == 1),
+        torch.conv2d(input=torch.nn.ReflectionPad2d(2)(cfa_bayerpatterns.unsqueeze(1)), weight=GR_GB[None, None, ...]).squeeze(1),
+        rgb_bayerpatterns[:,1,:,:]
+    )
+
+    R_row = torch.any(rgbmasks_bayerpatterns[:,0,:,:] == 1, axis=2).unsqueeze(2) * torch.ones_like(rgb_bayerpatterns[:,0,:,:], dtype=torch.bool, device=device)
+    R_col = torch.any(rgbmasks_bayerpatterns[:,0,:,:] == 1, axis=1).unsqueeze(1) * torch.ones_like(rgb_bayerpatterns[:,0,:,:], dtype=torch.bool, device=device)
+
+    B_row = torch.any(rgbmasks_bayerpatterns[:,2,:,:] == 1, axis=2).unsqueeze(2) * torch.ones_like(rgb_bayerpatterns[:,2,:,:], dtype=torch.bool, device=device)
+    B_col = torch.any(rgbmasks_bayerpatterns[:,2,:,:] == 1, axis=1).unsqueeze(1) * torch.ones_like(rgb_bayerpatterns[:,2,:,:], dtype=torch.bool, device=device)
+
+    RBg_RBBR = torch.conv2d(torch.nn.ReflectionPad2d(2)(cfa_bayerpatterns.unsqueeze(1)), Rg_RB_Bg_BR[None, None, ...]).squeeze(1)
+    RBg_BRRB = torch.conv2d(torch.nn.ReflectionPad2d(2)(cfa_bayerpatterns.unsqueeze(1)), Rg_BR_Bg_RB[None, None, ...]).squeeze(1)
+    RBgr_BBRR = torch.conv2d(torch.nn.ReflectionPad2d(2)(cfa_bayerpatterns.unsqueeze(1)), Rb_BB_Br_RR[None, None, ...]).squeeze(1)
 
     del GR_GB, Rg_RB_Bg_BR, Rg_BR_Bg_RB, Rb_BB_Br_RR
 
-    # Red rows.
-    R_r = torch.t(torch.any(R_m == 1, axis=1)[None]) * torch.ones(R.size(), device=device)
-    # Red columns.
-    R_c = torch.any(R_m == 1, axis=0)[None] * torch.ones(R.size(), device=device)
-    # Blue rows.
-    B_r = torch.t(torch.any(B_m == 1, axis=1)[None]) * torch.ones(B.size(), device=device)
-    # Blue columns
-    B_c = torch.any(B_m == 1, axis=0)[None] * torch.ones(B.size(), device=device)
+    rgb_bayerpatterns[:,0,:,:] = torch.where(torch.logical_and(R_row == 1, B_col == 1), RBg_RBBR, rgb_bayerpatterns[:,0,:,:])
+    rgb_bayerpatterns[:,0,:,:] = torch.where(torch.logical_and(B_row == 1, R_col == 1), RBg_BRRB, rgb_bayerpatterns[:,0,:,:])
 
-    R = torch.where(torch.logical_and(R_r == 1, B_c == 1), RBg_RBBR, R)
-    R = torch.where(torch.logical_and(B_r == 1, R_c == 1), RBg_BRRB, R)
+    rgb_bayerpatterns[:,2,:,:] = torch.where(torch.logical_and(B_row == 1, R_col == 1), RBg_RBBR, rgb_bayerpatterns[:,2,:,:])
+    rgb_bayerpatterns[:,2,:,:] = torch.where(torch.logical_and(R_row == 1, B_col == 1), RBg_BRRB, rgb_bayerpatterns[:,2,:,:])
 
-    B = torch.where(torch.logical_and(B_r == 1, R_c == 1), RBg_RBBR, B)
-    B = torch.where(torch.logical_and(R_r == 1, B_c == 1), RBg_BRRB, B)
+    rgb_bayerpatterns[:,0,:,:] = torch.where(torch.logical_and(B_row == 1, B_col == 1), RBgr_BBRR, rgb_bayerpatterns[:,0,:,:])
+    rgb_bayerpatterns[:,2,:,:] = torch.where(torch.logical_and(R_row == 1, R_col == 1), RBgr_BBRR, rgb_bayerpatterns[:,2,:,:])
 
-    R = torch.where(torch.logical_and(B_r == 1, B_c == 1), RBgr_BBRR, R)
-    B = torch.where(torch.logical_and(R_r == 1, R_c == 1), RBgr_BBRR, B)
+    del RBg_RBBR, RBg_BRRB, RBgr_BBRR, R_row, R_col, B_row, B_col
 
-    del RBg_RBBR, RBg_BRRB, RBgr_BBRR, R_r, R_c, B_r, B_c
-
-    # remove values out of bonds (0-255)
-    return torch.stack([torch.clamp(R.squeeze([0, 1]), 0, 255),
-                        torch.clamp(G.squeeze([0, 1]), 0, 255),
-                        torch.clamp(B.squeeze([0, 1]), 0, 255)], 2).type(torch.uint8)
-
-
+    return torch.stack([torch.clamp(rgb_bayerpatterns[:,0,:,:], 0, 255),
+                        torch.clamp(rgb_bayerpatterns[:,1,:,:], 0, 255),
+                        torch.clamp(rgb_bayerpatterns[:,2,:,:], 0, 255)], 3).type(torch.uint8)
 
 if __name__ == "__main__":
-    start = time.time()
-
-    # enable gpu acceleration if available
-    device = torch.device("cuda" if torch.cuda.is_available()
-                          else "mps" if torch.backends.mps.is_available()
-                          else "cpu")
-    print(f"torch use {device}")
-
-    # sensor alignments tuple
-    patterns = ["gbrg", "grbg", "bggr", "rggb"]
-    print(f"sensor alignment patterns: {patterns}")
-
-    # torch can't read or write tif, use scikit-image helper
-    # rgbimg collection
-    rgbimgs = io.ImageCollection("img/*.TIF", load_func=io.imread)
-    print(f"number of input image: {len(rgbimgs)}")
-    print("scimageread\t{:.3f}s".format(time.time()-start))
-
-    # calculate RGB mask to reuse in both mosaic() and demosaic()
-    r_ms, g_ms, b_ms = bayer_mask(rgbimgs, patterns)
-
-    # cfaimg = mosaic(rgbimg, R_m, G_m, B_m)
-    # print("mosaic\t\t{:.3f}s".format(time.time()-start))
-
-    # newimg = demosaic(cfaimg, R_m, G_m, B_m)
-    # print("demosaic\t{:.3f}s".format(time.time()-start))
-
-    # pyvips.Image.new_from_array(newimg.cpu().detach().numpy(), interpretation="rgb").write_to_file("new-cv.tif")
-    # print("pyvipswrite\t{:.3f}s".format(time.time()-start))
+    print("redemosaic() function.")

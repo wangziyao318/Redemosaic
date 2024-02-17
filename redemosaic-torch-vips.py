@@ -1,4 +1,4 @@
-import pyvips
+import cv2 as cv
 import torch
 import time
 
@@ -66,12 +66,17 @@ def demosaic(cfaimg, pattern):
     # free up (V)RAM
     del G_m
 
+
+    gst = time.process_time()
+
     # calculate bilinear G value at all R and B locations
     G = torch.where(torch.logical_or(R_m == 1, B_m == 1),
                     torch.conv2d(
                         torch.nn.ReflectionPad2d(2)(cfaimg),
                         GR_GB[None, None, ...]
                     ), G)
+    
+    print(f"G interpolate time {time.process_time() - gst}s")
 
     RBg_RBBR = torch.conv2d(torch.nn.ReflectionPad2d(2)(cfaimg), Rg_RB_Bg_BR[None, None, ...])
     RBg_BRRB = torch.conv2d(torch.nn.ReflectionPad2d(2)(cfaimg), Rg_BR_Bg_RB[None, None, ...])
@@ -109,16 +114,14 @@ def demosaic(cfaimg, pattern):
 
 if __name__ == "__main__":
     start = time.time()
-    device = torch.device("cuda" if torch.cuda.is_available()
-                          else "mps" if torch.backends.mps.is_available()
-                          else "cpu")
+    device = "cpu"
     print(f"torch use {device}")
     #TODO iterate sensor alignment
     pattern = "bggr"
 
     # torch can't read or write tif, use pyvips helper to send to libvips
-    rgbimg = torch.tensor(pyvips.Image.new_from_file("./1.tif").numpy(), device=device)
-    print("pyvipsread\t {:.3f}s".format(time.time()-start))
+    rgbimg = torch.tensor(cv.imread("img/r0a2e85f0t.TIF")[:,:,[2,1,0]], device=device)
+    # print("pyvipsread\t {:.3f}s".format(time.time()-start))
 
     cfaimg = mosaic(rgbimg, pattern)
     print("mosaic\t {:.3f}s".format(time.time()-start))
@@ -126,5 +129,5 @@ if __name__ == "__main__":
     newimg = demosaic(cfaimg, pattern)
     print("demosaic {:.3f}s".format(time.time()-start))
 
-    pyvips.Image.new_from_array(newimg.cpu().detach().numpy(), interpretation="rgb").write_to_file("new-cv.tif")
-    print("pyvipswrite\t {:.3f}s".format(time.time()-start))
+    # pyvips.Image.new_from_array(newimg.cpu().detach().numpy(), interpretation="rgb").write_to_file("new-cv.tif")
+    # print("pyvipswrite\t {:.3f}s".format(time.time()-start))
