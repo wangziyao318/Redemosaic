@@ -5,7 +5,6 @@ import cv2 as cv
 def bayer_mask(shape, pattern):
     # init dict object channels contain "r", "g", and "b" with same input shape
     channels = {channel: np.zeros((shape[0], shape[1]), dtype="bool") for channel in "rgb"}
-
     for channel, (y, x) in zip(pattern, [(0, 0), (0, 1), (1, 0), (1, 1)]):
         # not a good implementation, but channels[channel][y::2][x::2]=1 not work
         for col in channels[channel][y::2]:
@@ -16,7 +15,6 @@ def bayer_mask(shape, pattern):
 # mosaic
 def mosaic(rgbimg, pattern):
     R_m, G_m, B_m = bayer_mask(rgbimg.shape, pattern)
-
     return rgbimg[:,:,0] * R_m + rgbimg[:,:,1] * G_m + rgbimg[:,:,2] * B_m
 
 # demosaic
@@ -60,7 +58,6 @@ def demosaic(cfaimg, pattern):
     G = cfaimg * G_m
     B = cfaimg * B_m
 
-    # free up RAM
     del G_m
 
     # calculate bilinear G value at all R and B locations
@@ -98,21 +95,18 @@ def demosaic(cfaimg, pattern):
     return np.stack((np.clip(R, 0, 255), np.clip(G, 0, 255), np.clip(B, 0, 255)), axis=2, dtype=np.uint8, casting="unsafe")
 
 
-
 if __name__ == "__main__":
-
+    """
+    Good for single image single Bayer pattern test use, not intended for batch processing
+    """
     print("opencv implementation")
-    #TODO iterate sensor alignment
-    pattern = "bggr"
+    bayer_pattern = "bggr"
 
     # convert opencv default BGR arrangement to RGB
     rgbimg = cv.imread("img/r0a2e85f0t.TIF")[:,:,[2,1,0]]
 
+    cfaimg = mosaic(rgbimg, bayer_pattern)
 
-    cfaimg = mosaic(rgbimg, pattern)
-
-
-    # newimg in RGB
-    newimg = demosaic(cfaimg, pattern)
+    newimg = demosaic(cfaimg, bayer_pattern)
 
     cv.imwrite("output/1.tif", newimg[:,:,[2,1,0]])
