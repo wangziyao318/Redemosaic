@@ -17,7 +17,7 @@ def psnr(
     assert preds.ndim == 4
     B = preds.size(0)
     
-    MSE = torch.mean(torch.pow(preds - target.unsqueeze(0).expand(B, -1, -1, -1), 2),
+    MSE = torch.mean(torch.pow(preds - target.expand(B, -1, -1, -1), 2),
                      dim=(1,2,3), keepdim=True, dtype=torch.float32).squeeze((1,2,3))
     return 10 * (2 * torch.log10(torch.full((B,), data_range, dtype=torch.float32, device=preds.device)) - torch.log10(MSE))
 
@@ -56,7 +56,8 @@ def ssim(
     
     cov_norm = NP / (NP-1.)
     preds_y = torch.matmul(preds.float(), RGB2Y)
-    targets_y = torch.matmul(target.float().unsqueeze(0).expand(B, -1, -1, -1), RGB2Y)
+    targets_y = torch.matmul(target.float(), RGB2Y).expand(B, -1, -1)
+    
     kernel = torch.full((1, 1, window_size, window_size), 1./NP, dtype=torch.float32, device=device)
 
     del preds, target, NP, RGB2Y

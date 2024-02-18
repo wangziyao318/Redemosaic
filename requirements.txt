@@ -1,7 +1,5 @@
-numpy
-scikit-image
-imagecodecs
-opencv-python
 torch
 torchvision
+scikit-image
+imagecodecs
 tqdm
