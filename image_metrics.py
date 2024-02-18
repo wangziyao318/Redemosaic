@@ -3,19 +3,19 @@ import torch
 
 def psnr(
         preds: torch.Tensor,
-        targets: torch.Tensor,
+        target: torch.Tensor,
         data_range: float = 255.
     ) -> torch.Tensor:
     """
-    The function calculates PSNR between batch of predictions and targets given data range.
+    The function calculates PSNR between batch of predictions and target given data range.
 
-    Input: (B, H, W, 3)
+    Input: preds(B, H, W, 3) and target(H, W, 3)
 
-    Return: (B)
+    Return: psnr(B)
     """
     assert preds.ndim == 4
-    assert preds.size() == targets.size()
     assert data_range >= 0 and data_range <= 255
+    targets = target.unsqueeze(0).repeat(preds.size(0), 1, 1, 1)
 
     MSE = torch.mean((preds - targets) ** 2, dim=(1,2,3), keepdim=True, dtype=torch.float32).squeeze((1,2,3))
     return 10 * (2 * torch.log10(torch.ones_like(MSE, dtype=torch.float32, device=preds.device) * data_range) - torch.log10(MSE))
@@ -23,14 +23,14 @@ def psnr(
 
 def ssim(
         preds: torch.Tensor,
-        targets: torch.Tensor,
+        target: torch.Tensor,
         data_range: float = 255.,
         window_size: int = 7,
         K1: float = .01,
         K2: float = .03
 ) -> torch.Tensor:
     """
-    The function calculates SSIM on Y between batch of predictions and targets given data range.
+    The function calculates SSIM on Y between batch of predictions and target given data range.
 
     Scikit-learn uses symmetric padding while torch uses reflection padding, making results vary slightly.
     
@@ -38,16 +38,16 @@ def ssim(
 
     window_size: length of convolution kernel, default 7 gives padding 3, must be odd number.
 
-    Input: (B, H, W, 3)
+    Input: preds(B, H, W, 3) and target(H, W, 3)
 
-    Return: (B)
+    Return: ssim(B)
     """
     assert preds.ndim == 4
-    assert preds.size() == targets.size()
     assert data_range >= 0 and data_range <= 255
     assert window_size % 2 == 1
     device = preds.device
     padding = window_size // 2
+    targets = target.unsqueeze(0).repeat(preds.size(0), 1, 1, 1)
 
     C1 = (K1 * data_range) ** 2
     C2 = (K2 * data_range) ** 2
@@ -58,9 +58,10 @@ def ssim(
     kernel = torch.ones((1, 1, window_size, window_size), dtype=torch.float32, device=device) / (window_size * window_size)
 
     inputs = torch.cat((preds_y.unsqueeze(1), targets_y.unsqueeze(1), (preds_y * preds_y).unsqueeze(1), (targets_y * targets_y).unsqueeze(1), (preds_y * targets_y).unsqueeze(1)))
-    outputs = torch.conv2d(torch.nn.ReflectionPad2d(padding)(inputs), kernel).split(preds_y.size(0))
+    ux, uy, uxx, uyy, uxy = torch.conv2d(torch.nn.ReflectionPad2d(padding)(inputs), kernel).split(preds_y.size(0))
 
-    ux, uy, uxx, uyy, uxy = outputs
+    del preds_y, targets_y, kernel
+
     vx = uxx - ux * ux
     vy = uyy - uy * uy
     vxy = uxy - ux * uy
