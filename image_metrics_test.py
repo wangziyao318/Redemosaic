@@ -1,8 +1,9 @@
 import torch
 import skimage.metrics
-import image_metrics
 import cv2 as cv
 import time
+
+import image_metrics
 
 device = torch.device("cuda" if torch.cuda.is_available()
                           else "mps" if torch.backends.mps.is_available()

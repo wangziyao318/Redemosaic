@@ -3,4 +3,5 @@ scikit-image
 imagecodecs
 opencv-python
 torch
+torchvision
 tqdm
