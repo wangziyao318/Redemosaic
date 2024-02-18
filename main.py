@@ -4,6 +4,7 @@ from tqdm import tqdm
 from tifffile.tifffile import TiffFileError
 
 from redemosaic import redemosaic
+from image_metrics import psnr, ssim
 
 device = torch.device("cuda" if torch.cuda.is_available()
                       else "mps" if torch.backends.mps.is_available()
@@ -20,7 +21,13 @@ if __name__ == "__main__":
     i = 0
     try:
         for rgbimg in tqdm(rgbimgs):
-            redemosaic(torch.tensor(rgbimg, dtype=torch.uint8, device=device), bayer_patterns)
+            target = torch.tensor(rgbimg, dtype=torch.uint8, device=device)
+            preds = redemosaic(target, bayer_patterns)
+            print(psnr(preds, target.unsqueeze(0).repeat(4, 1, 1, 1)))
+            print(ssim(preds, target.unsqueeze(0).repeat(4, 1, 1, 1)))
+
+
+
             i = i + 1
     except TiffFileError:
         print(f"{imgpaths[i]} corrupted")
