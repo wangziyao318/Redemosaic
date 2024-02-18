@@ -3,21 +3,20 @@ import torch
 
 def redemosaic(
         rgbimg: torch.Tensor,
-        bayer_patterns: list[str] = ["gbrg", "grbg", "bggr", "rggb"],
-        device: torch.device = torch.device("cpu")
+        bayer_patterns: tuple[str] = ("gbrg", "grbg", "bggr", "rggb")
     ) -> torch.Tensor:
     """
     The function creates redemosaiced images of any Bayer patterns given rgbimage.
     
-    Default Bayer patterns: ["gbrg", "grbg", "bggr", "rggb"]
+    Default Bayer patterns: ("gbrg", "grbg", "bggr", "rggb")
 
-    Default device: torch.device("cpu")
-
-    Return: (n, L, W, 3)
+    Return: redemosaiced RGB images of n Bayer patterns (n, L, W, 3)
     """
     assert isinstance(rgbimg, torch.Tensor)
-    assert isinstance(bayer_patterns, list)
-    assert isinstance(device, torch.device)
+    assert isinstance(bayer_patterns, tuple)
+    for bayer_pattern in bayer_patterns:
+        assert bayer_pattern in ("gbrg", "grbg", "bggr", "rggb")
+    device = rgbimg.device
 
     GR_GB = torch.tensor([
         [0, 0, -1, 0, 0],
@@ -70,17 +69,17 @@ def redemosaic(
         rgb_bayerpatterns[:,1,:,:]
     )
 
-    R_row = torch.any(rgbmasks_bayerpatterns[:,0,:,:] == 1, axis=2).unsqueeze(2) * torch.ones_like(rgb_bayerpatterns[:,0,:,:], dtype=torch.bool, device=device)
-    R_col = torch.any(rgbmasks_bayerpatterns[:,0,:,:] == 1, axis=1).unsqueeze(1) * torch.ones_like(rgb_bayerpatterns[:,0,:,:], dtype=torch.bool, device=device)
-
-    B_row = torch.any(rgbmasks_bayerpatterns[:,2,:,:] == 1, axis=2).unsqueeze(2) * torch.ones_like(rgb_bayerpatterns[:,2,:,:], dtype=torch.bool, device=device)
-    B_col = torch.any(rgbmasks_bayerpatterns[:,2,:,:] == 1, axis=1).unsqueeze(1) * torch.ones_like(rgb_bayerpatterns[:,2,:,:], dtype=torch.bool, device=device)
-
     RBg_RBBR = torch.conv2d(torch.nn.ReflectionPad2d(2)(cfa_bayerpatterns.unsqueeze(1)), Rg_RB_Bg_BR[None, None, ...]).squeeze(1)
     RBg_BRRB = torch.conv2d(torch.nn.ReflectionPad2d(2)(cfa_bayerpatterns.unsqueeze(1)), Rg_BR_Bg_RB[None, None, ...]).squeeze(1)
     RBgr_BBRR = torch.conv2d(torch.nn.ReflectionPad2d(2)(cfa_bayerpatterns.unsqueeze(1)), Rb_BB_Br_RR[None, None, ...]).squeeze(1)
 
     del GR_GB, Rg_RB_Bg_BR, Rg_BR_Bg_RB, Rb_BB_Br_RR
+
+    R_row = torch.any(rgbmasks_bayerpatterns[:,0,:,:] == 1, axis=2).unsqueeze(2) * torch.ones_like(rgb_bayerpatterns[:,0,:,:], dtype=torch.bool, device=device)
+    R_col = torch.any(rgbmasks_bayerpatterns[:,0,:,:] == 1, axis=1).unsqueeze(1) * torch.ones_like(rgb_bayerpatterns[:,0,:,:], dtype=torch.bool, device=device)
+
+    B_row = torch.any(rgbmasks_bayerpatterns[:,2,:,:] == 1, axis=2).unsqueeze(2) * torch.ones_like(rgb_bayerpatterns[:,2,:,:], dtype=torch.bool, device=device)
+    B_col = torch.any(rgbmasks_bayerpatterns[:,2,:,:] == 1, axis=1).unsqueeze(1) * torch.ones_like(rgb_bayerpatterns[:,2,:,:], dtype=torch.bool, device=device)
 
     rgb_bayerpatterns[:,0,:,:] = torch.where(torch.logical_and(R_row == 1, B_col == 1), RBg_RBBR, rgb_bayerpatterns[:,0,:,:])
     rgb_bayerpatterns[:,0,:,:] = torch.where(torch.logical_and(B_row == 1, R_col == 1), RBg_BRRB, rgb_bayerpatterns[:,0,:,:])
