@@ -5,7 +5,7 @@ from torchvision.transforms.functional import pad
 def psnr(
         preds: torch.Tensor,
         target: torch.Tensor,
-        data_range: float = 255.
+        data_range: int = 255
     ) -> torch.Tensor:
     """
     The function calculates PSNR between batch of predictions and target given data range.
@@ -16,16 +16,16 @@ def psnr(
     """
     assert preds.ndim == 4
     assert data_range >= 0 and data_range <= 255
-    targets = target.unsqueeze(0).repeat(preds.size(0), 1, 1, 1)
 
-    MSE = torch.mean((preds - targets) ** 2, dim=(1,2,3), keepdim=True, dtype=torch.float32).squeeze((1,2,3))
-    return 10 * (2 * torch.log10(torch.ones_like(MSE, dtype=torch.float32, device=preds.device) * data_range) - torch.log10(MSE))
+    MSE = torch.mean((preds - target.unsqueeze(0).repeat(preds.size(0), 1, 1, 1)) ** 2,
+                     dim=(1,2,3), keepdim=True, dtype=torch.float32).squeeze((1,2,3))
+    return 10 * (2 * torch.log10(torch.ones(preds.size(0), dtype=torch.float32, device=preds.device) * data_range) - torch.log10(MSE))
 
 
 def ssim(
         preds: torch.Tensor,
         target: torch.Tensor,
-        data_range: float = 255.,
+        data_range: int = 255,
         window_size: int = 7,
         K1: float = .01,
         K2: float = .03
@@ -48,7 +48,6 @@ def ssim(
     assert window_size % 2 == 1
     device = preds.device
     padding = window_size // 2
-    targets = target.unsqueeze(0).repeat(preds.size(0), 1, 1, 1)
 
     C1 = (K1 * data_range) ** 2
     C2 = (K2 * data_range) ** 2
@@ -56,14 +55,20 @@ def ssim(
     RGB2Y = torch.tensor((0.2989, 0.5870, 0.1140), dtype=torch.float32, device=device)
     
     preds_y = preds.float() @ RGB2Y
-    targets_y = targets.float() @ RGB2Y
+    targets_y = target.unsqueeze(0).repeat(preds.size(0), 1, 1, 1).float() @ RGB2Y
     cov_norm = NP / (NP-1.)
     kernel = torch.ones((1, 1, window_size, window_size), dtype=torch.float32, device=device) / NP
 
-    inputs = torch.cat((preds_y.unsqueeze(1), targets_y.unsqueeze(1), (preds_y * preds_y).unsqueeze(1), (targets_y * targets_y).unsqueeze(1), (preds_y * targets_y).unsqueeze(1)))
+    del preds, target, NP, RGB2Y
+
+    inputs = torch.cat((preds_y.unsqueeze(1),
+                        targets_y.unsqueeze(1),
+                        (preds_y * preds_y).unsqueeze(1),
+                        (targets_y * targets_y).unsqueeze(1),
+                        (preds_y * targets_y).unsqueeze(1)))
     ux, uy, uxx, uyy, uxy = torch.conv2d(pad(inputs, padding, padding_mode="symmetric"), kernel).split(preds_y.size(0))
 
-    del preds_y, targets_y, kernel
+    del preds_y, targets_y, kernel, inputs
 
     vx = cov_norm * (uxx - ux * ux)
     vy = cov_norm * (uyy - uy * uy)
@@ -75,5 +80,7 @@ def ssim(
     B2 = vx + vy + C2
     D = B1 * B2
     S = (A1 * A2) / D
+
+    del cov_norm, ux, uy, uxx, uyy, uxy, vx, vy, vxy, A1, A2, B1, B2, D
 
     return torch.mean(S[..., padding:-padding, padding:-padding], dim=(1,2,3), keepdim=True, dtype=torch.float32).squeeze((1,2,3))

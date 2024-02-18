@@ -16,30 +16,29 @@ bayer_patterns = ("gbrg", "grbg", "bggr", "rggb")
 if __name__ == "__main__":
     print(f"torch use {device}")
 
-    rgbimgs = skimage.io.imread_collection("img/*.TIF")
-    imgpaths = str(rgbimgs)[1:-1].split(', ')
-
+    rgbimgs = skimage.io.imread_collection("imgtest/*.TIF", conserve_memory=True, plugin="tifffile")
+    imgpaths = tuple(str(rgbimgs)[1:-1].translate({ ord("'"): None}).split(', '))
     results = {}
-    i = 0
+
     try:
-        for rgbimg in tqdm(rgbimgs):
+        for rgbimg, imgpath in tqdm(zip(rgbimgs, imgpaths), total=len(rgbimgs)):
+            # Redemosaic
             target = torch.tensor(rgbimg, dtype=torch.uint8, device=device)
             preds = redemosaic(target, bayer_patterns)
 
-            results[imgpaths[i][1:-1]] = {}
-            results[imgpaths[i][1:-1]]["psnr"] = {}
-            results[imgpaths[i][1:-1]]["ssim"] = {}
-            
+            # PSNR, SSIM
             psnr_o = psnr(preds, target)
             ssim_o = ssim(preds, target)
-            
-            for bayer_pattern, psnr_i, ssim_i in zip(bayer_patterns, psnr_o, ssim_o):
-                results[imgpaths[i][1:-1]]["psnr"][bayer_pattern] = psnr_i.item()
-                results[imgpaths[i][1:-1]]["ssim"][bayer_pattern] = ssim_i.item()
 
-            i = i + 1
+            # Store results
+            results[imgpath] = {}
+            results[imgpath]["psnr"] = {}
+            results[imgpath]["ssim"] = {}
+            for bayer_pattern, psnr_i, ssim_i in zip(bayer_patterns, psnr_o, ssim_o):
+                results[imgpath]["psnr"][bayer_pattern] = psnr_i.item()
+                results[imgpath]["ssim"][bayer_pattern] = ssim_i.item()
     except TiffFileError:
-        print(f"ERROR: corrupted file {imgpaths[i]}")
+        print(f"ERROR: corrupted file detected after {imgpath}")
     finally:
         with open("results.json", "w") as f:
             json.dump(results, f)
