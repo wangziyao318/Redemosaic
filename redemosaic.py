@@ -10,7 +10,7 @@ def redemosaic(
     
     Default Bayer patterns: ("gbrg", "grbg", "bggr", "rggb")
 
-    Return: redemosaiced RGB images of n Bayer patterns (n, L, W, 3)
+    Return: redemosaiced RGB images of B Bayer patterns (B, H, W, 3)
     """
     assert isinstance(rgbimg, torch.Tensor)
     assert isinstance(bayer_patterns, tuple)
