@@ -1,4 +1,5 @@
 import torch
+from torchvision.transforms.functional import pad
 
 
 def psnr(
@@ -51,20 +52,22 @@ def ssim(
 
     C1 = (K1 * data_range) ** 2
     C2 = (K2 * data_range) ** 2
+    NP = window_size * window_size
     RGB2Y = torch.tensor((0.2989, 0.5870, 0.1140), dtype=torch.float32, device=device)
     
     preds_y = preds.float() @ RGB2Y
     targets_y = targets.float() @ RGB2Y
-    kernel = torch.ones((1, 1, window_size, window_size), dtype=torch.float32, device=device) / (window_size * window_size)
+    cov_norm = NP / (NP-1.)
+    kernel = torch.ones((1, 1, window_size, window_size), dtype=torch.float32, device=device) / NP
 
     inputs = torch.cat((preds_y.unsqueeze(1), targets_y.unsqueeze(1), (preds_y * preds_y).unsqueeze(1), (targets_y * targets_y).unsqueeze(1), (preds_y * targets_y).unsqueeze(1)))
-    ux, uy, uxx, uyy, uxy = torch.conv2d(torch.nn.ReflectionPad2d(padding)(inputs), kernel).split(preds_y.size(0))
+    ux, uy, uxx, uyy, uxy = torch.conv2d(pad(inputs, padding, padding_mode="symmetric"), kernel).split(preds_y.size(0))
 
     del preds_y, targets_y, kernel
 
-    vx = uxx - ux * ux
-    vy = uyy - uy * uy
-    vxy = uxy - ux * uy
+    vx = cov_norm * (uxx - ux * ux)
+    vy = cov_norm * (uyy - uy * uy)
+    vxy = cov_norm * (uxy - ux * uy)
     
     A1 = 2 * ux * uy + C1
     A2 = 2 * vxy + C2
