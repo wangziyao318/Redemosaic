@@ -2,12 +2,12 @@ import os
 import json
 import torch
 import asyncio
-from glob import glob
 from skimage.io import imread_collection
 from tqdm.asyncio import tqdm
 
 from redemosaic import redemosaic
 from image_metrics import psnr, ssim, vmaf
+
 
 # torch enable gpu acceleration if possible
 device = torch.device("cuda" if torch.cuda.is_available()
@@ -45,9 +45,8 @@ async def main():
 
     # input images, extension is case sensitive
     targets = imread_collection(os.path.join(target_folder, "*" + target_ext), conserve_memory=True)
-
     # input image names with extension
-    target_names = tuple([os.path.basename(i) for i in glob(os.path.join(target_folder, "*" + target_ext))])
+    target_names = str(targets)[1:-1].translate({ord("'"): None}).replace(target_folder + "/", "").split(', ')
 
     # continue with existing results if update_results is True
     results = {}
@@ -96,8 +95,8 @@ async def main():
                     results[target_name]["psnr"][bayer_pattern] = psnr_i.item()
                     results[target_name]["ssim"][bayer_pattern] = ssim_i.item()
     except ExceptionGroup:
-        # possibly tifffile.tifffile.TiffFileError
-        print(f"ERROR: corrupted file detected around {target_name}")
+        print(f"Error found near {target_name}")
+        raise
     finally:
         with open(results_file, "w") as f:
             json.dump(results, f)

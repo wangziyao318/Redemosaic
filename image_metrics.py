@@ -1,4 +1,5 @@
 import os
+import re
 import torch
 import asyncio
 from skimage.io import imsave
@@ -98,10 +99,15 @@ async def _vmaf_compute(
 
     It is intended for asyncio task instantiation.
     """
-    proc = await asyncio.create_subprocess_shell(f'ffmpeg -i {pred_path} -i {target_path} -lavfi libvmaf=model=version={vmaf_version} -f null - 2>&1 | grep VMAF | cut -d" " -f 6', stdout=asyncio.subprocess.PIPE)
+    # proc = await asyncio.create_subprocess_shell(f'ffmpeg -i {pred_path} -i {target_path} -lavfi libvmaf=model=version={vmaf_version} -f null - 2>&1 | grep VMAF | cut -d" " -f 6', stdout=asyncio.subprocess.PIPE)
+    proc = await asyncio.create_subprocess_shell(f'ffmpeg -i {pred_path} -i {target_path} -lavfi libvmaf=model=version={vmaf_version} -f null -', stderr=asyncio.subprocess.PIPE)
+    _, stderr = await proc.communicate()
 
-    return float((await proc.communicate())[0].decode())
-
+    matches = re.findall(r'VMAF score: ([+-]?([0-9]*[.])?[0-9]+)', stderr.decode())
+    if len(matches) != 1:
+        print(f"Error: vmaf on {target_path} with stderr {stderr.decode()}")
+        return -1
+    return float(matches[0][0])
 
 async def vmaf(
         preds: torch.Tensor,
