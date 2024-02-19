@@ -14,8 +14,9 @@ device = torch.device("cuda" if torch.cuda.is_available()
                       else "mps" if torch.backends.mps.is_available()
                       else "cpu")
 
-# batch size 4 in cuda requires at least 12G VRAM and 16G RAM.
-# if no gpu acceleration, please do batch size 1 for 4 times and set update_results to True.
+# batch size 4 in cuda requires at least 13G VRAM and 17G RAM.
+# batch size 2 in cuda requires at least G VRAM and G RAM.
+# if use cpu, please do batch size 1 for 4 times and set update_results to True.
 # bayer_patterns is a tuple, so "," is required when only one element exists.
 bayer_patterns = ("gbrg", "grbg", "bggr", "rggb")
 # bayer_patterns = ("bggr", "rggb")
