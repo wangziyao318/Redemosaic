@@ -25,8 +25,16 @@ bayer_patterns = ("gbrg", "grbg", "bggr", "rggb")
 # do not overwrite results file
 update_results = False
 
-# enable VMAF and set tuple of VMAF versions
+# enable calculating VMAF
 use_vmaf = True
+# enable cuda acceleration of VMAF, requires compiled libvmaf and ffmpeg with cuda enabled
+# in practice, libvmaf_cuda is slower than libvmaf on cpu for single image comparison, but is faster for video (batch of frames) comparison
+# it's recommended to leave it disabled
+libvmaf_cuda = False
+# max concurrent vmaf cuda tasks on gpu, prevent CUDA out of memory error, extra vmaf tasks are allocated to cpu
+# only works when libvmaf_cuda = True
+vmaf_cuda_concurrent = 4
+# set tuple of VMAF versions, recommended to use "vmaf_v0.6.1" only because "vmaf_4k_v0.6.1" results are bigger and often 100.0
 vmaf_versions = ("vmaf_v0.6.1", "vmaf_4k_v0.6.1")
 # vmaf_versions = ("vmaf_v0.6.1",)
 
@@ -48,6 +56,7 @@ async def main():
     targets = imread_collection(os.path.join(target_folder, "*" + target_ext), conserve_memory=True)
     # input image names with extension
     target_names = str(targets)[1:-1].translate({ord("'"): None}).replace(target_folder + "/", "").split(', ')
+    B = len(targets)
 
     # continue with existing results if update_results is True
     results = {}
@@ -59,12 +68,13 @@ async def main():
             print(f"{results_file} corrupted, please set update_results to False to overwrite it")
             return
     
+    vmaf_cuda_tasks = []
     # main function
     try:
         # TaskGroup() is introduced in Python3.11, please upgrade Python if you encounter error
         async with asyncio.TaskGroup() as tg:
             # for each input image
-            async for target, target_name in tqdm(zip(targets, target_names), total=len(target_names)):
+            async for target, target_name in tqdm(zip(targets, target_names), total=B):
                 # init tensor of input image
                 target = torch.tensor(target, dtype=torch.uint8, device=device)
 
@@ -77,8 +87,11 @@ async def main():
 
                 # calculate VMAF
                 if use_vmaf:
-                    # async VMAF task handled by TaskGroup()
-                    tg.create_task(vmaf(preds, preds_folder, target_name, target_folder, results, bayer_patterns, vmaf_versions))
+                    # limit number of concurrent vmaf cuda tasks, prevent CUDA out of memory and send extra tasks to cpu
+                    if libvmaf_cuda and sum([not task.done() for task in vmaf_cuda_tasks]) < vmaf_cuda_concurrent:
+                        vmaf_cuda_tasks.append(tg.create_task(vmaf(preds, preds_folder, target_name, target_folder, results, bayer_patterns, vmaf_versions, libvmaf_cuda)))
+                    else:
+                        tg.create_task(vmaf(preds, preds_folder, target_name, target_folder, results, bayer_patterns, vmaf_versions, False))
                     # calling await after create_task() is necessary for the task to actually start running
                     # eager_task_factory() introduced in Python3.12 could overcome this, but torch-cuda not provides package for Python3.12 yet
                     await asyncio.sleep(0)
@@ -99,6 +112,8 @@ async def main():
         print(f"Error found near {target_name}")
         raise
     finally:
+        del targets, target_names
+        print(f"VMAF on CUDA: {len(vmaf_cuda_tasks)}it\nVMAF on CPU: {B - len(vmaf_cuda_tasks)}it")
         with open(results_file, "w") as f:
             json.dump(results, f)
         print(f"Results written to {results_file}")

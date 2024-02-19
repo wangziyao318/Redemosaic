@@ -6,6 +6,8 @@ from skimage.io import imsave
 from torchvision.transforms.functional import pad
 from concurrent.futures import ProcessPoolExecutor
 
+import time
+
 
 def psnr(
         preds: torch.Tensor,
@@ -90,22 +92,35 @@ def ssim(
 async def _vmaf_compute(
         pred_path: str,
         target_path: str,
-        vmaf_version: str = "vmaf_v0.6.1"
+        vmaf_version: str = "vmaf_v0.6.1",
+        libvmaf_cuda: bool = False
     ) -> float:
     """
-    This async function calculates VMAF between prediction image and target image given vmaf_version.
+    This async function uses CPU or CUDA to calculate VMAF between prediction image and target image given vmaf_version.
 
     It requires libvmaf-enabled ffmpeg in path.
 
     It is intended for asyncio task instantiation.
     """
-    # proc = await asyncio.create_subprocess_shell(f'ffmpeg -i {pred_path} -i {target_path} -lavfi libvmaf=model=version={vmaf_version} -f null - 2>&1 | grep VMAF | cut -d" " -f 6', stdout=asyncio.subprocess.PIPE)
-    proc = await asyncio.create_subprocess_shell(f'ffmpeg -i {pred_path} -i {target_path} -lavfi libvmaf=model=version={vmaf_version} -f null -', stderr=asyncio.subprocess.PIPE)
+    proc = await asyncio.create_subprocess_shell(
+        f'''ffmpeg \
+        -i {pred_path} \
+        -i {target_path} \
+        -filter_complex "
+            format=yuv420p,hwupload_cuda,scale_cuda[pred]; \
+            format=yuv420p,hwupload_cuda,scale_cuda[target]; \
+            [pred][target]libvmaf_cuda=model=version={vmaf_version}
+        " \
+        -f null -''',
+        stderr=asyncio.subprocess.PIPE) if libvmaf_cuda else await asyncio.create_subprocess_shell(
+            f'ffmpeg -i {pred_path} -i {target_path} -lavfi libvmaf=model=version={vmaf_version} -f null -',
+            stderr=asyncio.subprocess.PIPE)
+    
     _, stderr = await proc.communicate()
 
     matches = re.findall(r'VMAF score: ([+-]?([0-9]*[.])?[0-9]+)', stderr.decode())
     if len(matches) != 1:
-        print(f"Error: vmaf on {target_path} with stderr {stderr.decode()}")
+        print(f"Error: vmaf on {target_path} with stderr\n{stderr.decode()}")
         return -1
     return float(matches[0][0])
 
@@ -116,7 +131,8 @@ async def vmaf(
         target_folder: str,
         results: dict,
         bayer_patterns: tuple[str],
-        vmaf_versions: tuple[str] = ("vmaf_v0.6.1",)
+        vmaf_versions: tuple[str] = ("vmaf_v0.6.1",),
+        libvmaf_cuda: bool = False
     ):
     """
     This async function handles VMAF between batch of predictions and target using different versions of VMAF models.
@@ -138,11 +154,20 @@ async def vmaf(
     with ProcessPoolExecutor(B) as executor:
         executor.map(imsave, preds_path, preds.cpu().detach().numpy(), (None,) * B, (False,) * B)
 
+    bg = time.time()
+
     tasks = [[] for i in vmaf_versions]
+    # TaskGroup() is introduced in Python3.11, please upgrade Python if you encounter error
     async with asyncio.TaskGroup() as tg:
         for vmaf_version, task_l in zip(vmaf_versions, tasks):
             for pred_path in preds_path:
-                task_l.append(tg.create_task(_vmaf_compute(pred_path, os.path.join(target_folder, target_name), vmaf_version)))
+                task = tg.create_task(_vmaf_compute(pred_path, os.path.join(target_folder, target_name), vmaf_version, libvmaf_cuda))
+                # prevent CUDA out of memory, please keep this and adjust vmaf_cuda_concurrent
+                if libvmaf_cuda: await task
+
+                task_l.append(task)
+
+    print(f"vmaf {'cuda' if libvmaf_cuda else 'cpu'} took {time.time() - bg}s")
 
     await asyncio.create_subprocess_shell(f"rm {' '.join(preds_path)}")
 
