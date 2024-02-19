@@ -31,7 +31,7 @@ vmaf_versions = ("vmaf_v0.6.1", "vmaf_4k_v0.6.1")
 # vmaf_versions = ("vmaf_v0.6.1",)
 
 # under PYTHONPATH
-target_folder = "imgtest"
+target_folder = "img"
 preds_folder = "output"
 results_file = "results.json"
 
