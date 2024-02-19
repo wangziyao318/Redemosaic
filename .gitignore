@@ -20,5 +20,6 @@ __pycache__
 # Dataset
 *.TIF
 *.tif
+*.png
 
 results.json
