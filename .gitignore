@@ -18,6 +18,9 @@ __pycache__
 .venv
 
 # Dataset
+img
+imgfake
+output
 *.TIF
 *.tif
 *.png
