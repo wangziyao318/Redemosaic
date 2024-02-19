@@ -123,14 +123,13 @@ async def vmaf(
     assert isinstance(vmaf_versions, tuple)
     for vmaf_version in vmaf_versions:
         assert vmaf_version in ("vmaf_v0.6.1", "vmaf_4k_v0.6.1")
-    B = len(bayer_patterns)
 
     preds_path = []
     for bayer_pattern in bayer_patterns:
         preds_path.append(os.path.join(preds_folder, bayer_pattern + "_" + target_name))
     
-    with ProcessPoolExecutor(B) as executor:
-        executor.map(imsave, preds_path, preds.cpu().detach().numpy(), ("tifffile",) * B)
+    with ProcessPoolExecutor(len(bayer_patterns)) as executor:
+        executor.map(imsave, preds_path, preds.cpu().detach().numpy())
 
     tasks = [[] for i in vmaf_versions]
     async with asyncio.TaskGroup() as tg:

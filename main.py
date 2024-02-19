@@ -34,17 +34,20 @@ target_folder = "img"
 preds_folder = "output"
 results_file = "results.json"
 
+# input image extension
+target_ext = ".TIF"
+
 async def main():
     """
     async main() function for asyncio compatibility.
     """
     print(f"torch use {device}")
 
-    # input .TIF images, extension is case sensitive
-    targets = imread_collection(os.path.join(target_folder, "*.TIF"), conserve_memory=True, plugin="tifffile")
+    # input images, extension is case sensitive
+    targets = imread_collection(os.path.join(target_folder, "*" + target_ext), conserve_memory=True)
 
-    # input image names with extension .TIF
-    target_names = tuple([os.path.basename(i) for i in glob(os.path.join(target_folder, "*.TIF"))])
+    # input image names with extension
+    target_names = tuple([os.path.basename(i) for i in glob(os.path.join(target_folder, "*" + target_ext))])
 
     # continue with existing results if update_results is True
     results = {}
