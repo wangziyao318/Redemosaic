@@ -1,11 +1,6 @@
 import torch
-import os
 import asyncio
-from skimage.io import imsave
 from torchvision.transforms.functional import pad
-from concurrent.futures import ProcessPoolExecutor
-
-import time
 
 
 def psnr(
@@ -88,61 +83,6 @@ def ssim(
     return torch.mean(S[..., padding:-padding, padding:-padding], dim=(1,2,3), keepdim=True, dtype=torch.float32).squeeze((1,2,3))
 
 
+async def vmaf():
 
-
-async def vmaf_cal(
-        pred_path: str,
-        target_path: str,
-        vmaf_version: str
-    ) -> float:
-
-    bg = time.time()
-
-    proc = await asyncio.create_subprocess_shell(f'ffmpeg -i {pred_path} -i {target_path} -lavfi libvmaf=model=version={vmaf_version} -f null - 2>&1 | grep VMAF | cut -d" " -f 6', stdout=asyncio.subprocess.PIPE)
-    stdout, _ = await proc.communicate()
-
-    print(f"a ffmpeg use {time.time() - bg}s to generate {float(stdout.decode())}")
-
-    return float(stdout.decode())
-
-
-async def vmaf(
-        preds: torch.Tensor,
-        imgname: str,
-        targets_folder: str,
-        preds_folder: str,
-        bayer_patterns: tuple[str],
-        results: dict
-    ):
-    begin = time.time()
-
-    print(f"enter vmaf {imgname}")
-
-    vmaf_version = "vmaf_v0.6.1"
-
-    plugins = ("tifffile",) * len(bayer_patterns)
-    preds_path = []
-    for bayer_pattern in bayer_patterns:
-        preds_path.append(os.path.join(preds_folder, bayer_pattern + "_" + imgname))
-    
-    # multiprocess writing of preds in 1-4 bayer patterns, though not make a difference
-    with ProcessPoolExecutor(len(bayer_patterns)) as executor:
-        executor.map(imsave, preds_path, preds.cpu().detach().numpy(), plugins)
-
-
-    tasks = []
-    
-
-    async with asyncio.TaskGroup() as tg:
-        for pred_path in preds_path:
-            tasks.append(tg.create_task(vmaf_cal(pred_path, os.path.join(targets_folder, imgname), vmaf_version)))
-
-
-    # rm preds images
-    await asyncio.create_subprocess_shell(f"rm {' '.join(preds_path)}")
-
-    results[imgname]["vmaf"] = {}
-    for bayer_pattern, task in zip(bayer_patterns, tasks):
-        results[imgname]["vmaf"][bayer_pattern] = task.result()
-
-    print(f"vmaf for {imgname} costs {time.time() - begin}s")
+    return 0
