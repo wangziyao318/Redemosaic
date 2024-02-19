@@ -1,90 +1,104 @@
-import asyncio
-import json
-from skimage.io import imread_collection
-import glob
-import ntpath
-import torch
 import os
+import json
+import torch
+import asyncio
+from glob import glob
+from skimage.io import imread_collection
 from tqdm.asyncio import tqdm
-from tifffile.tifffile import TiffFileError
-
-import time
 
 from redemosaic import redemosaic
 from image_metrics import psnr, ssim, vmaf
 
+# torch enable gpu acceleration if possible
 device = torch.device("cuda" if torch.cuda.is_available()
                       else "mps" if torch.backends.mps.is_available()
                       else "cpu")
 
+# batch size 4 in cuda requires at least 12G VRAM and 16G RAM.
+# if no gpu acceleration, please do batch size 1 for 4 times and set update_results to True.
+# bayer_patterns is a tuple, so "," is required when only one element exists.
 bayer_patterns = ("gbrg", "grbg", "bggr", "rggb")
 # bayer_patterns = ("bggr", "rggb")
 # bayer_patterns = ("bggr",)
 
+# do not overwrite results file
 update_results = False
-# use_vmaf = True
 
-# under PYTHONPATH=. by default
-targets_folder = "img"
+# enable VMAF and set tuple of VMAF versions
+use_vmaf = True
+vmaf_versions = ("vmaf_v0.6.1", "vmaf_4k_v0.6.1")
+# vmaf_versions = ("vmaf_v0.6.1",)
+
+# under PYTHONPATH
+target_folder = "img"
 preds_folder = "output"
 results_file = "results.json"
 
 async def main():
+    """
+    async main() function for asyncio compatibility.
+    """
     print(f"torch use {device}")
 
-    rgbimgs = imread_collection(os.path.join(targets_folder, "*.TIF"), conserve_memory=True, plugin="tifffile")
-    imgnames = tuple([ntpath.basename(i) for i in glob.glob(os.path.join(targets_folder, "*.TIF"))])
+    # input .TIF images, extension is case sensitive
+    targets = imread_collection(os.path.join(target_folder, "*.TIF"), conserve_memory=True, plugin="tifffile")
 
+    # input image names with extension .TIF
+    target_names = tuple([os.path.basename(i) for i in glob(os.path.join(target_folder, "*.TIF"))])
+
+    # continue with existing results if update_results is True
     results = {}
     if update_results:
         try:
             with open(results_file, "r") as f:
                 results = json.load(f)
-        except json.decoder.JSONDecodeError:
-            print("results file corrupted, please set update_results to True")
+        except json.decoder.JSONDecodeError or OSError:
+            print(f"{results_file} corrupted, please set update_results to False to overwrite it")
+            return
     
+    # main function
     try:
+        # TaskGroup() is introduced in Python3.11, please upgrade Python if you encounter error
         async with asyncio.TaskGroup() as tg:
-            async for rgbimg, imgname in tqdm(zip(rgbimgs, imgnames), total=len(imgnames)):
+            # for each input image
+            async for target, target_name in tqdm(zip(targets, target_names), total=len(target_names)):
+                # init tensor of input image
+                target = torch.tensor(target, dtype=torch.uint8, device=device)
 
-                # Redemosaic
-                target = torch.tensor(rgbimg, dtype=torch.uint8, device=device)
-                # begin = time.time()
+                # Redemosaic input image on each Bayer pattern, generate a batch of redemosaiced output images
                 preds = redemosaic(target, bayer_patterns)
-                # print(f"redemosaic on {device} took {time.time() - begin}s")
 
-                # init results dict for this image
-                results[imgname] = {}
+                # init results dict with input image name, takes account in update results case
+                if target_name not in results.keys():
+                    results[target_name] = {}
 
-                # async calculation of vmaf
-                tg.create_task(vmaf(preds, imgname, targets_folder, preds_folder, bayer_patterns, results))
-                # await after create_task() is necessary for the task to start running
-                await asyncio.sleep(0)
+                # calculate VMAF
+                if use_vmaf:
+                    # async VMAF task handled by TaskGroup()
+                    tg.create_task(vmaf(preds, preds_folder, target_name, target_folder, results, bayer_patterns, vmaf_versions))
+                    # calling await after create_task() is necessary for the task to actually start running
+                    # eager_task_factory() introduced in Python3.12 could overcome this, but torch-cuda not provides package for Python3.12 yet
+                    await asyncio.sleep(0)
 
-                # PSNR, SSIM
-                # begin = time.time()
+                # calculate PSNR and SSIM
                 psnr_o = psnr(preds, target)
-                # print(f"psnr on {device} took {time.time() - begin}s")
-                # begin = time.time()
                 ssim_o = ssim(preds, target)
-                # print(f"ssim on {device} took {time.time() - begin}s")
 
-                # Store results for PSNR and SSIM
-                results[imgname]["psnr"] = {}
-                results[imgname]["ssim"] = {}
+                # Store PSNR and SSIM results in dict
+                if "psnr" not in results[target_name].keys():
+                    results[target_name]["psnr"] = {}
+                if "ssim" not in results[target_name].keys():
+                    results[target_name]["ssim"] = {}
                 for bayer_pattern, psnr_i, ssim_i in zip(bayer_patterns, psnr_o, ssim_o):
-                    results[imgname]["psnr"][bayer_pattern] = psnr_i.item()
-                    results[imgname]["ssim"][bayer_pattern] = ssim_i.item()
-
-    except TiffFileError:
-        print(f"ERROR: corrupted file detected after {imgname}")
-    except asyncio.CancelledError:
-        print("async task cancelled")
+                    results[target_name]["psnr"][bayer_pattern] = psnr_i.item()
+                    results[target_name]["ssim"][bayer_pattern] = ssim_i.item()
+    except ExceptionGroup:
+        # possibly tifffile.tifffile.TiffFileError
+        print(f"ERROR: corrupted file detected around {target_name}")
     finally:
         with open(results_file, "w") as f:
             json.dump(results, f)
+        print(f"Results written to {results_file}")
 
 if __name__ == "__main__":
-    mst = time.time()
     asyncio.run(main())
-    print(f"overall time {time.time() - mst}s")

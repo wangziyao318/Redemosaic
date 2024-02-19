@@ -1,11 +1,9 @@
-import torch
 import os
+import torch
 import asyncio
 from skimage.io import imsave
 from torchvision.transforms.functional import pad
 from concurrent.futures import ProcessPoolExecutor
-
-import time
 
 
 def psnr(
@@ -88,61 +86,64 @@ def ssim(
     return torch.mean(S[..., padding:-padding, padding:-padding], dim=(1,2,3), keepdim=True, dtype=torch.float32).squeeze((1,2,3))
 
 
-
-
-async def vmaf_cal(
+async def _vmaf_compute(
         pred_path: str,
         target_path: str,
-        vmaf_version: str
+        vmaf_version: str = "vmaf_v0.6.1"
     ) -> float:
+    """
+    This async function calculates VMAF between prediction image and target image given vmaf_version.
 
-    bg = time.time()
+    It requires libvmaf-enabled ffmpeg in path.
 
+    It is intended for asyncio task instantiation.
+    """
     proc = await asyncio.create_subprocess_shell(f'ffmpeg -i {pred_path} -i {target_path} -lavfi libvmaf=model=version={vmaf_version} -f null - 2>&1 | grep VMAF | cut -d" " -f 6', stdout=asyncio.subprocess.PIPE)
-    stdout, _ = await proc.communicate()
 
-    print(f"a ffmpeg use {time.time() - bg}s to generate {float(stdout.decode())}")
-
-    return float(stdout.decode())
+    return float((await proc.communicate())[0].decode())
 
 
 async def vmaf(
         preds: torch.Tensor,
-        imgname: str,
-        targets_folder: str,
         preds_folder: str,
+        target_name: str,
+        target_folder: str,
+        results: dict,
         bayer_patterns: tuple[str],
-        results: dict
+        vmaf_versions: tuple[str] = ("vmaf_v0.6.1",)
     ):
-    begin = time.time()
+    """
+    This async function handles VMAF between batch of predictions and target using different versions of VMAF models.
 
-    print(f"enter vmaf {imgname}")
+    It saves predictions as files and deletes them after VMAF calculation.
 
-    vmaf_version = "vmaf_v0.6.1"
+    VMAF calculation is done in parallel to make full use of cpu and speed up.
+    """
+    assert preds.size(0) == len(bayer_patterns)
+    assert isinstance(vmaf_versions, tuple)
+    for vmaf_version in vmaf_versions:
+        assert vmaf_version in ("vmaf_v0.6.1", "vmaf_4k_v0.6.1")
+    B = len(bayer_patterns)
 
-    plugins = ("tifffile",) * len(bayer_patterns)
     preds_path = []
     for bayer_pattern in bayer_patterns:
-        preds_path.append(os.path.join(preds_folder, bayer_pattern + "_" + imgname))
+        preds_path.append(os.path.join(preds_folder, bayer_pattern + "_" + target_name))
     
-    # multiprocess writing of preds in 1-4 bayer patterns, though not make a difference
-    with ProcessPoolExecutor(len(bayer_patterns)) as executor:
-        executor.map(imsave, preds_path, preds.cpu().detach().numpy(), plugins)
+    with ProcessPoolExecutor(B) as executor:
+        executor.map(imsave, preds_path, preds.cpu().detach().numpy(), ("tifffile",) * B)
 
-
-    tasks = []
-    
-
+    tasks = [[] for i in vmaf_versions]
     async with asyncio.TaskGroup() as tg:
-        for pred_path in preds_path:
-            tasks.append(tg.create_task(vmaf_cal(pred_path, os.path.join(targets_folder, imgname), vmaf_version)))
+        for vmaf_version, task_l in zip(vmaf_versions, tasks):
+            for pred_path in preds_path:
+                task_l.append(tg.create_task(_vmaf_compute(pred_path, os.path.join(target_folder, target_name), vmaf_version)))
 
-
-    # rm preds images
     await asyncio.create_subprocess_shell(f"rm {' '.join(preds_path)}")
 
-    results[imgname]["vmaf"] = {}
-    for bayer_pattern, task in zip(bayer_patterns, tasks):
-        results[imgname]["vmaf"][bayer_pattern] = task.result()
-
-    print(f"vmaf for {imgname} costs {time.time() - begin}s")
+    if "vmaf" not in results[target_name].keys():
+        results[target_name]["vmaf"] = {}
+    for vmaf_version, task_l in zip(vmaf_versions, tasks):
+        if vmaf_version not in results[target_name]["vmaf"].keys():
+            results[target_name]["vmaf"][vmaf_version] = {}
+        for bayer_pattern, task in zip(bayer_patterns, task_l):
+            results[target_name]["vmaf"][vmaf_version][bayer_pattern] = task.result()
