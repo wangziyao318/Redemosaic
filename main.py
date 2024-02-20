@@ -32,15 +32,15 @@ enable_vmaf = True
 libvmaf_cuda = True
 # max concurrent vmaf cuda tasks on GPU, extra vmaf tasks are allocated to CPU to balance the load
 # only works when libvmaf_cuda = True
-vmaf_cuda_window_size = 8
+vmaf_cuda_window_size = 128
 # set VMAF versions to use
 vmaf_versions = ["vmaf_v0.6.1", "vmaf_4k_v0.6.1"]
 # vmaf_versions = ["vmaf_v0.6.1"]
 
 # input image extension without dot, case sensitive
-target_ext = "TIF"
+target_ext = "png"
 # directory under PYTHONPATH
-target_dir = "img"
+target_dir = "imgfake"
 preds_dir = "output"
 results_file = "results.json"
 

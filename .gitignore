@@ -19,10 +19,9 @@ __pycache__
 
 # Dataset
 img
+imgcorrupted
 imgfake
 output
-*.TIF
-*.tif
-*.png
 
+# Results
 results.json
