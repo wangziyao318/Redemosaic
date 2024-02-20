@@ -15,9 +15,10 @@ device = torch.device("cuda" if torch.cuda.is_available()
                       else "mps" if torch.backends.mps.is_available()
                       else "cpu")
 
-# batch size 4 in cuda requires at least 12G VRAM.
-# batch size 2 in cuda requires at least 8G VRAM.
-# if use cpu, please do batch size 1 for 4 times and set update_results to True.
+# batch_size = len(bayer_patterns)
+# CUDA with batch size 4 requires at least 12G VRAM GPU.
+# CUDA with batch size 2 requires at least 8G VRAM GPU.
+# at least 16GB RAM is recommended if use CPU, please do batch size 1 for 4 times and set update_results to True.
 bayer_patterns = ["gbrg", "grbg", "bggr", "rggb"]
 # bayer_patterns = ["bggr", "rggb"]
 # bayer_patterns = ["bggr"]
