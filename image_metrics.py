@@ -2,9 +2,9 @@ import os
 import json
 import torch
 import asyncio
-from skimage.io import imsave
 from pathlib import Path
 from tqdm.asyncio import tqdm
+from skimage.io import imsave
 from torchvision.transforms.functional import pad
 from concurrent.futures import ProcessPoolExecutor
 

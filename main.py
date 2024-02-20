@@ -1,11 +1,11 @@
 import os
 import json
-from glob import glob
 import torch
 import asyncio
-from skimage.io import imread_collection
+from glob import glob
 from pathlib import Path
 from tqdm.asyncio import tqdm
+from skimage.io import imread_collection
 
 from redemosaic import redemosaic
 from image_metrics import psnr, ssim, vmaf
