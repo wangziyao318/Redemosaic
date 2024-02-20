@@ -16,12 +16,14 @@ _minted-*
 # Python
 __pycache__
 .venv
+test.py
 
 # Dataset
 img
 imgcorrupted
 imgfake
 output
+imgtest
 
 # Results
 results.json
