@@ -92,6 +92,7 @@ def ssim(
 async def _vmaf_compute(
         preds_path: str,
         target_path: str,
+        batch_size: int,
         vmaf_versions: list[str] = ["vmaf_v0.6.1"],
         libvmaf_cuda: bool = False
     ) -> list[list[float]]:
@@ -125,7 +126,7 @@ async def _vmaf_compute(
             f'''ffmpeg \
             -framerate 1 -i {preds_path} \
             -i {target_path} \
-            -lavfi libvmaf='model={vmaf_versions_str}:log_path={log_path}:log_fmt=json' \
+            -lavfi libvmaf='model={vmaf_versions_str}:log_path={log_path}:log_fmt=json:n_threads={batch_size}' \
             -f null -''',
             stderr=asyncio.subprocess.PIPE)
     _, stderr = await proc.communicate()
@@ -178,7 +179,7 @@ async def vmaf(
     vmafs = await _vmaf_compute(
         os.path.join(preds_dir, "%d_" + target_filename),
         os.path.join(target_dir, target_filename),
-        vmaf_versions, libvmaf_cuda)
+        batch_size, vmaf_versions, libvmaf_cuda)
 
     await asyncio.create_subprocess_shell(f'''rm {" ".join(preds_files)} {os.path.join(preds_dir, target_name + ".json")}''')
 

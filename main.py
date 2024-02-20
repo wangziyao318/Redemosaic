@@ -15,8 +15,8 @@ device = torch.device("cuda" if torch.cuda.is_available()
                       else "mps" if torch.backends.mps.is_available()
                       else "cpu")
 
-# batch size 4 in cuda requires at least 13G VRAM and 17G RAM.
-# batch size 2 in cuda requires at least G VRAM and G RAM.
+# batch size 4 in cuda requires at least 12G VRAM.
+# batch size 2 in cuda requires at least 8G VRAM.
 # if use cpu, please do batch size 1 for 4 times and set update_results to True.
 bayer_patterns = ["gbrg", "grbg", "bggr", "rggb"]
 # bayer_patterns = ["bggr", "rggb"]
@@ -31,7 +31,7 @@ enable_vmaf = True
 libvmaf_cuda = True
 # max concurrent vmaf cuda tasks on GPU, extra vmaf tasks are allocated to CPU to balance the load
 # only works when libvmaf_cuda = True
-vmaf_cuda_window_size = 4
+vmaf_cuda_window_size = 8
 # set VMAF versions to use
 vmaf_versions = ["vmaf_v0.6.1", "vmaf_4k_v0.6.1"]
 # vmaf_versions = ["vmaf_v0.6.1"]
@@ -39,7 +39,7 @@ vmaf_versions = ["vmaf_v0.6.1", "vmaf_4k_v0.6.1"]
 # input image extension without dot, case sensitive
 target_ext = "TIF"
 # directory under PYTHONPATH
-target_dir = "imgtest"
+target_dir = "img"
 preds_dir = "output"
 results_file = "results.json"
 
