@@ -6,7 +6,6 @@ from pathlib import Path
 from tqdm.asyncio import tqdm
 from skimage.io import imsave
 from torchvision.transforms.functional import pad
-from concurrent.futures import ProcessPoolExecutor
 
 
 def psnr(
@@ -126,7 +125,7 @@ async def _vmaf_compute(
             f'''ffmpeg \
             -framerate 1 -i {preds_path} \
             -i {target_path} \
-            -lavfi libvmaf='model={vmaf_versions_str}:log_path={log_path}:log_fmt=json:n_threads={batch_size}' \
+            -lavfi libvmaf='model={vmaf_versions_str}:log_path={log_path}:log_fmt=json:n_threads={batch_size * 2}' \
             -f null -''',
             stderr=asyncio.subprocess.PIPE)
     _, stderr = await proc.communicate()
@@ -170,11 +169,9 @@ async def vmaf(
     batch_size = len(bayer_patterns)
     target_filename = target_name + "." + target_ext
 
-    # simply use %d_*.TIF filename for robustness
     preds_files = [os.path.join(preds_dir, str(i+1) + "_" + target_filename) for i in range(batch_size)]
-
-    with ProcessPoolExecutor(batch_size) as executor:
-        executor.map(imsave, preds_files, preds.cpu().detach().numpy(), (None,) * batch_size, (False,) * batch_size)
+    for pred, pred_file in zip(preds, preds_files):
+        imsave(pred_file, pred.cpu().detach().numpy(), check_contrast=False)
 
     vmafs = await _vmaf_compute(
         os.path.join(preds_dir, "%d_" + target_filename),
