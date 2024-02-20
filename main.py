@@ -2,7 +2,6 @@ import os
 import json
 import torch
 import asyncio
-from glob import glob
 from pathlib import Path
 from tqdm.asyncio import tqdm
 from skimage.io import imread_collection
@@ -32,7 +31,7 @@ enable_vmaf = True
 libvmaf_cuda = True
 # max concurrent vmaf cuda tasks on GPU, extra vmaf tasks are allocated to CPU to balance the load
 # only works when libvmaf_cuda = True
-vmaf_cuda_window_size = 16
+vmaf_cuda_window_size = 4
 # set VMAF versions to use
 vmaf_versions = ["vmaf_v0.6.1", "vmaf_4k_v0.6.1"]
 # vmaf_versions = ["vmaf_v0.6.1"]
@@ -40,7 +39,7 @@ vmaf_versions = ["vmaf_v0.6.1", "vmaf_4k_v0.6.1"]
 # input image extension without dot, case sensitive
 target_ext = "TIF"
 # directory under PYTHONPATH
-target_dir = "img"
+target_dir = "imgtest"
 preds_dir = "output"
 results_file = "results.json"
 
@@ -55,9 +54,9 @@ async def main():
     """
     print(f"torch use {device}")
 
-    # read input images
-    target_paths = glob(os.path.join(target_dir, "*." + target_ext))
-    targets = imread_collection(target_paths, conserve_memory=True)
+    # read input images, note that imread_collection() behaves differently from glob()
+    targets = imread_collection(os.path.join(target_dir, "*." + target_ext), conserve_memory=True)
+    target_paths = str(targets)[1:-1].translate({ord("'"): None}).split(", ")
     
     # set number of input images to process
     batch_count = min(N, len(target_paths) - start_target_index)
@@ -134,7 +133,6 @@ async def main():
     except asyncio.exceptions.CancelledError:
         raise
     finally:
-        del targets, target_paths, target_names
         with open(results_file, "w") as f:
             json.dump(results, f)
         print(f"\nResults written to {results_file}")

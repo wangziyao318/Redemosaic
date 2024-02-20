@@ -128,15 +128,16 @@ async def _vmaf_compute(
             -lavfi libvmaf='model={vmaf_versions_str}:log_path={log_path}:log_fmt=json' \
             -f null -''',
             stderr=asyncio.subprocess.PIPE)
-    await proc.communicate()
+    _, stderr = await proc.communicate()
 
     try:
         with open(log_path, "r") as f:
             logs = json.load(f)
     except OSError:
+        print(stderr.decode())
         raise
     except json.decoder.JSONDecodeError:
-        print(f"\nFatal Error: {log_path} vmaf log file corrupted, no fix available")
+        print(stderr.decode())
         raise
 
     results = [[float(frame["metrics"][vmaf_version]) for vmaf_version in vmaf_versions] for frame in logs["frames"]]
