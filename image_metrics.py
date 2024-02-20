@@ -1,12 +1,12 @@
 import os
-import re
+import json
 import torch
 import asyncio
 from skimage.io import imsave
+from pathlib import Path
+from tqdm.asyncio import tqdm
 from torchvision.transforms.functional import pad
 from concurrent.futures import ProcessPoolExecutor
-
-import time
 
 
 def psnr(
@@ -90,49 +90,70 @@ def ssim(
 
 
 async def _vmaf_compute(
-        pred_path: str,
+        preds_path: str,
         target_path: str,
-        vmaf_version: str = "vmaf_v0.6.1",
+        vmaf_versions: list[str] = ["vmaf_v0.6.1"],
         libvmaf_cuda: bool = False
-    ) -> float:
+    ) -> list[list[float]]:
     """
-    This async function uses CPU or CUDA to calculate VMAF between prediction image and target image given vmaf_version.
+    This async function uses CPU or CUDA to calculate VMAF between batch of prediction images and target image given vmaf_versions.
 
     It requires libvmaf-enabled ffmpeg in path.
 
     It is intended for asyncio task instantiation.
     """
-    proc = await asyncio.create_subprocess_shell(
-        f'''ffmpeg \
-        -i {pred_path} \
-        -i {target_path} \
-        -filter_complex "
-            format=yuv420p,hwupload_cuda,scale_cuda[pred]; \
-            format=yuv420p,hwupload_cuda,scale_cuda[target]; \
-            [pred][target]libvmaf_cuda=model=version={vmaf_version}
-        " \
-        -f null -''',
-        stderr=asyncio.subprocess.PIPE) if libvmaf_cuda else await asyncio.create_subprocess_shell(
-            f'ffmpeg -i {pred_path} -i {target_path} -lavfi libvmaf=model=version={vmaf_version} -f null -',
-            stderr=asyncio.subprocess.PIPE)
-    
-    _, stderr = await proc.communicate()
+    vmaf_versions_str = "|".join(["version=" + vmaf_version + "\\\\:name=" + vmaf_version for vmaf_version in vmaf_versions])
 
-    matches = re.findall(r'VMAF score: ([+-]?([0-9]*[.])?[0-9]+)', stderr.decode())
-    if len(matches) != 1:
-        print(f"Error: vmaf on {target_path} with stderr\n{stderr.decode()}")
-        return -1
-    return float(matches[0][0])
+    target_name = Path(target_path).stem
+    preds_dir = os.path.dirname(preds_path)
+    log_path = os.path.join(preds_dir, target_name + ".json")
+    
+    if libvmaf_cuda:
+        proc = await asyncio.create_subprocess_shell(
+            f'''ffmpeg \
+            -framerate 1 -i {preds_path} \
+            -i {target_path} \
+            -filter_complex "
+                format=yuv420p,hwupload_cuda,scale_cuda[pred]; \
+                format=yuv420p,hwupload_cuda,scale_cuda[target]; \
+                [pred][target]libvmaf_cuda='model={vmaf_versions_str}:log_path={log_path}:log_fmt=json'
+            " \
+            -f null -''',
+            stderr=asyncio.subprocess.PIPE)
+    else:
+        proc = await asyncio.create_subprocess_shell(
+            f'''ffmpeg \
+            -framerate 1 -i {preds_path} \
+            -i {target_path} \
+            -lavfi libvmaf='model={vmaf_versions_str}:log_path={log_path}:log_fmt=json' \
+            -f null -''',
+            stderr=asyncio.subprocess.PIPE)
+    await proc.communicate()
+
+    try:
+        with open(log_path, "r") as f:
+            logs = json.load(f)
+    except OSError:
+        raise
+    except json.decoder.JSONDecodeError:
+        print(f"\nFatal Error: {log_path} vmaf log file corrupted, no fix available")
+        raise
+
+    results = [[float(frame["metrics"][vmaf_version]) for vmaf_version in vmaf_versions] for frame in logs["frames"]]
+    # transpose results
+    return [list(i) for i in zip(*results)]
 
 async def vmaf(
         preds: torch.Tensor,
-        preds_folder: str,
+        preds_dir: str,
         target_name: str,
-        target_folder: str,
+        target_ext: str,
+        target_dir: str,
         results: dict,
-        bayer_patterns: tuple[str],
-        vmaf_versions: tuple[str] = ("vmaf_v0.6.1",),
-        libvmaf_cuda: bool = False
+        bayer_patterns: list[str],
+        vmaf_versions: list[str] = ["vmaf_v0.6.1"],
+        libvmaf_cuda: bool = False,
+        tqdm_iterator: tqdm = None
     ):
     """
     This async function handles VMAF between batch of predictions and target using different versions of VMAF models.
@@ -142,39 +163,31 @@ async def vmaf(
     VMAF calculation is done in parallel to make full use of cpu and speed up.
     """
     assert preds.size(0) == len(bayer_patterns)
-    assert isinstance(vmaf_versions, tuple)
     for vmaf_version in vmaf_versions:
-        assert vmaf_version in ("vmaf_v0.6.1", "vmaf_4k_v0.6.1")
-    B = len(bayer_patterns)
+        assert vmaf_version in ["vmaf_v0.6.1", "vmaf_4k_v0.6.1"]
+    batch_size = len(bayer_patterns)
+    target_filename = target_name + "." + target_ext
 
-    preds_path = []
-    for bayer_pattern in bayer_patterns:
-        preds_path.append(os.path.join(preds_folder, bayer_pattern + "_" + target_name))
+    # simply use %d_*.TIF filename for robustness
+    preds_files = [os.path.join(preds_dir, str(i+1) + "_" + target_filename) for i in range(batch_size)]
 
-    with ProcessPoolExecutor(B) as executor:
-        executor.map(imsave, preds_path, preds.cpu().detach().numpy(), (None,) * B, (False,) * B)
+    with ProcessPoolExecutor(batch_size) as executor:
+        executor.map(imsave, preds_files, preds.cpu().detach().numpy(), (None,) * batch_size, (False,) * batch_size)
 
-    bg = time.time()
+    vmafs = await _vmaf_compute(
+        os.path.join(preds_dir, "%d_" + target_filename),
+        os.path.join(target_dir, target_filename),
+        vmaf_versions, libvmaf_cuda)
 
-    tasks = [[] for i in vmaf_versions]
-    # TaskGroup() is introduced in Python3.11, please upgrade Python if you encounter error
-    async with asyncio.TaskGroup() as tg:
-        for vmaf_version, task_l in zip(vmaf_versions, tasks):
-            for pred_path in preds_path:
-                task = tg.create_task(_vmaf_compute(pred_path, os.path.join(target_folder, target_name), vmaf_version, libvmaf_cuda))
-                # prevent CUDA out of memory, please keep this and adjust vmaf_cuda_concurrent
-                if libvmaf_cuda: await task
+    await asyncio.create_subprocess_shell(f'''rm {" ".join(preds_files)} {os.path.join(preds_dir, target_name + ".json")}''')
 
-                task_l.append(task)
-
-    print(f"vmaf {'cuda' if libvmaf_cuda else 'cpu'} took {time.time() - bg}s")
-
-    await asyncio.create_subprocess_shell(f"rm {' '.join(preds_path)}")
-
-    if "vmaf" not in results[target_name].keys():
-        results[target_name]["vmaf"] = {}
-    for vmaf_version, task_l in zip(vmaf_versions, tasks):
-        if vmaf_version not in results[target_name]["vmaf"].keys():
-            results[target_name]["vmaf"][vmaf_version] = {}
-        for bayer_pattern, task in zip(bayer_patterns, task_l):
-            results[target_name]["vmaf"][vmaf_version][bayer_pattern] = task.result()
+    if "vmaf" not in results[target_filename].keys():
+        results[target_filename]["vmaf"] = {}
+    for vmaf_version, vmaf_l in zip(vmaf_versions, vmafs):
+        if vmaf_version not in results[target_filename]["vmaf"].keys():
+            results[target_filename]["vmaf"][vmaf_version] = {}
+        for bayer_pattern, vmaf_i in zip(bayer_patterns, vmaf_l):
+            results[target_filename]["vmaf"][vmaf_version][bayer_pattern] = vmaf_i
+    
+    if tqdm_iterator is not None:
+        tqdm_iterator.update(1)

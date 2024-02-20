@@ -3,7 +3,7 @@ import torch
 
 def redemosaic(
         rgbimg: torch.Tensor,
-        bayer_patterns: tuple[str] = ("gbrg", "grbg", "bggr", "rggb")
+        bayer_patterns: list[str] = ["gbrg", "grbg", "bggr", "rggb"]
     ) -> torch.Tensor:
     """
     The function creates redemosaiced images of any Bayer patterns given rgbimage.
@@ -13,9 +13,8 @@ def redemosaic(
     Return: redemosaiced RGB images of B Bayer patterns (B, H, W, 3)
     """
     assert isinstance(rgbimg, torch.Tensor)
-    assert isinstance(bayer_patterns, tuple)
     for bayer_pattern in bayer_patterns:
-        assert bayer_pattern in ("gbrg", "grbg", "bggr", "rggb")
+        assert bayer_pattern in ["gbrg", "grbg", "bggr", "rggb"]
     device = rgbimg.device
     H, W, _ = rgbimg.size()
 
