@@ -7,136 +7,151 @@ from tqdm.asyncio import tqdm
 from skimage.io import imread_collection
 
 from redemosaic import redemosaic
-from image_metrics import psnr, ssim, vmaf
+from image_metrics import psnr_rgb, evaluate
 
-
-# torch enable gpu acceleration if possible
 device = torch.device("cuda" if torch.cuda.is_available()
                       else "mps" if torch.backends.mps.is_available()
                       else "cpu")
-
-# batch_size = len(bayer_patterns)
-# CUDA with batch size 4 requires at least 16G VRAM GPU.
-# CUDA with batch size 2 requires at least 12G VRAM GPU.
-# CPU with batch size 1 requires at least 16GB RAM. please do it 4 times and set update_results to True.
+"""
+Given batch_size = len(bayer_patterns), hardware requirements for RAISE dataset:
+    # redemosaic() + evaluate()
+    torch.device("cuda") + {libvmaf_cuda, libvmaf} with batch_size 4 requires 12G+ VRAM depends on libvmaf_cuda_window_size. Slightly faster than the setting below for large images, and is equally fast for small images.
+    torch.device("cuda") + libvmaf with batch size 4 requires >= 8G VRAM. Recommended for NVIDIA users and is at least 4 times faster than pure CPU.
+    torch.device("cpu") + libvmaf with batch size 4 requires >= 16GB RAM and a powerful CPU. Not recommended because CPU doesn't benefit from batch_size.
+    torch.device("cpu") + libvmaf with batch size 1 requires >= 8GB RAM. Recommended for low-end users. Do it 4 times with different Bayer pattern and set update_results to True.
+"""
 bayer_patterns = ["gbrg", "grbg", "bggr", "rggb"]
-# bayer_patterns = ["bggr", "rggb"]
+# bayer_patterns = ["gbrg"]
+# bayer_patterns = ["grbg"]
 # bayer_patterns = ["bggr"]
-
-# set to True to avoid overwritting the results file
+# bayer_patterns = ["rggb"]
+"""
+Set to True to update instead of overwritting the results file.
+"""
 update_results = False
-
-# enable calculating VMAF
-enable_vmaf = True
-# enable cuda acceleration of VMAF, requires compiled libvmaf and ffmpeg with cuda enabled
-libvmaf_cuda = True
-# max concurrent vmaf cuda tasks on GPU, extra vmaf tasks are allocated to CPU to balance the load
-# only works when libvmaf_cuda = True
-vmaf_cuda_window_size = 128
-# set VMAF versions to use
+"""
+Default to False to delete redemosaiced images and metrics logs after computation.
+Not recommended to switch. Intermediate files can take up to 4 times disk space compared with the input dataset.
+"""
+keep_temp_files = False
+"""
+Set VMAF model versions to use.
+"""
 vmaf_versions = ["vmaf_v0.6.1", "vmaf_4k_v0.6.1"]
-# vmaf_versions = ["vmaf_v0.6.1"]
-
-# input image extension without dot, case sensitive
-target_ext = "png"
-# directory under PYTHONPATH
-target_dir = "imgfake"
-preds_dir = "output"
-results_file = "results.json"
-
-# specify index of input images to start, default 0. can be used as checkpoints
-start_target_index = 0
-# specify number of input images to process, set arbitrary big number to process all images
-N = 65535
+"""
+Set to True to use libvmaf_cuda, default to False to use libvmaf.
+Require libvmaf compiled with -Denable_cuda=true and ffmpeg compiled with --enable-nonfree --enable-ffnvcodec --enable-libvmaf.
+"""
+libvmaf_cuda = False
+"""
+Set max concurrent libvmaf_cuda tasks on GPU, while extra tasks are assigned to CPU to balance system load and prevent CUDA out of memory.
+Only works when libvmaf_cuda = True.
+"""
+libvmaf_cuda_window_size = 8
+"""
+By default, $PYTHONPATH=.
+Set input and temp directory under $PYTHONPATH
+target_dir is the directory of input dataset, and preds_dir temporarily holds redemosaiced images and metrics logs.
+target_ext is the input image extension without dot, case sensitive.
+Results is stored as a JSON file under $PYTHONPATH
+"""
+target_dir = "img"
+target_ext = "TIF"
+preds_dir = "temp"
+results_filename = "results.json"
+"""
+Set where to start and how many to process, can be used as checkpoints.
+The real batch_count is the minimum between the set value and number of remaining images.
+"""
+target_start_index = 0
+batch_count = 1000
 
 async def main():
     """
-    async main() function for asyncio compatibility.
+    Asynchronous main() function.
     """
     print(f"torch use {device}")
+    print(f"ffmpeg use {'libvmaf_cuda' if libvmaf_cuda else 'libvmaf'}")
+    if not os.path.exists(preds_dir):
+        os.makedirs(preds_dir)
 
-    # read input images, note that imread_collection() behaves differently from glob()
     targets = imread_collection(os.path.join(target_dir, "*." + target_ext), conserve_memory=True)
     target_paths = str(targets)[1:-1].translate({ord("'"): None}).split(", ")
-    
-    # set number of input images to process
-    batch_count = min(N, len(target_paths) - start_target_index)
-
-    # input filenames without ext
     target_names = map(lambda e : Path(e).stem, target_paths)
+    N = min(batch_count, len(target_paths) - target_start_index)
 
-    # continue with existing results if update_results is True
     results = {}
     if update_results:
         try:
-            with open(results_file, "r") as f:
+            with open(results_filename, "r") as f:
                 results = json.load(f)
         except OSError:
             raise
         except json.decoder.JSONDecodeError:
-            print(f"\n{results_file} corrupted, please set update_results to False to overwrite it")
+            print(f"\n{results_filename} corrupted, please set update_results to False to overwrite it.")
             return
     
-    vmaf_cuda_tasks = []
-    # main function
+    libvmaf_cuda_tasks = set()
+    tasks_counter = [0, 0]
     try:
-        # TaskGroup() is introduced in Python3.11, please upgrade Python if you encounter error
+        """
+        TaskGroup() is introduced in Python3.11, please upgrade Python if needed.
+        """
         async with asyncio.TaskGroup() as tg:
-            # create and customize tqdm iterators
-            main_iterator = tqdm(zip(targets, target_names), total=batch_count, position=0)
+            main_iterator = tqdm(zip(targets, target_names, range(N)), total=N, position=1)
             main_iterator.set_description("Main")
-            vmaf_iterator = tqdm(total=batch_count, position=1)
-            vmaf_iterator.set_description("VMAF")
-
-            async for target, target_name in main_iterator:
-                # init tensor (H,W,3) of input image
+            libvmaf_iterator = tqdm(total=N, position=0)
+            libvmaf_iterator.set_description("VMAF")
+            async for target, target_name, _ in main_iterator:
+                """
+                Input image: target(H,W,3).
+                """
                 target = torch.tensor(target, dtype=torch.uint8, device=device)
                 target_filename = target_name + "." + target_ext
-
-                # Redemosaic input image on each Bayer pattern, generate a batch of redemosaiced output images stacked to new dimension 0
-                # input: (H,W,3); output: (B,H,W,3) for B Bayer patterns
+                """
+                Redemosaiced image: preds(B,H,W,3).
+                """
                 preds = redemosaic(target, bayer_patterns)
 
-                # init results dict with input image name, takes account in update results case
                 if target_filename not in results.keys():
                     results[target_filename] = {}
+                for metric in ["psnr", "ssim", "vmaf"]:
+                    if metric not in results[target_filename].keys():
+                        results[target_filename][metric] = {}
 
-                # calculate VMAF asynchronously to mitigate lag and overhead in calling external programs
-                if enable_vmaf:
-                    # limit number of concurrent vmaf cuda tasks, send extra tasks to cpu to prevent 'CUDA out of memory'
-                    if libvmaf_cuda and sum(map(lambda task : not task.done(), vmaf_cuda_tasks)) < vmaf_cuda_window_size:
-                        vmaf_cuda_tasks.append(tg.create_task(vmaf(preds, preds_dir, target_name, target_ext, target_dir, results, bayer_patterns, vmaf_versions, libvmaf_cuda, vmaf_iterator)))
-                    # vmaf on cpu
-                    else:
-                        tg.create_task(vmaf(preds, preds_dir, target_name, target_ext, target_dir, results, bayer_patterns, vmaf_versions, False, vmaf_iterator))
-                    # calling await after create_task() is necessary for the task to actually start running
-                    # eager_task_factory() introduced in Python3.12 could overcome this, but torch-cuda not provides package for Python3.12 yet
-                    await asyncio.sleep(0)
+                if libvmaf_cuda and len(libvmaf_cuda_tasks) < libvmaf_cuda_window_size:
+                    task = tg.create_task(
+                        evaluate(preds, preds_dir, target_filename, target_dir, results, bayer_patterns, vmaf_versions, True, libvmaf_iterator, keep_temp_files)
+                    )
+                    libvmaf_cuda_tasks.add(task)
+                    tasks_counter[0] += 1
+                    task.add_done_callback(libvmaf_cuda_tasks.discard)
+                else:
+                    tg.create_task(
+                        evaluate(preds, preds_dir, target_filename, target_dir, results, bayer_patterns, vmaf_versions, False, libvmaf_iterator, keep_temp_files)
+                    )
+                    tasks_counter[1] += 1
+                await asyncio.sleep(0)
+                """
+                PSNR on R,G,B channels: (3,B).
+                """
+                psnrs = torch.t(psnr_rgb(preds, target))
 
-                # calculate PSNR and SSIM
-                psnr_o = psnr(preds, target)
-                ssim_o = ssim(preds, target)
-
-                # Store PSNR and SSIM results in dict
-                if "psnr" not in results[target_filename].keys():
-                    results[target_filename]["psnr"] = {}
-                if "ssim" not in results[target_filename].keys():
-                    results[target_filename]["ssim"] = {}
-                for bayer_pattern, psnr_i, ssim_i in zip(bayer_patterns, psnr_o, ssim_o):
-                    results[target_filename]["psnr"][bayer_pattern] = psnr_i.item()
-                    results[target_filename]["ssim"][bayer_pattern] = ssim_i.item()
-        if libvmaf_cuda:
-            print(f"\nVMAF: {len(vmaf_cuda_tasks)}it on CUDA, {batch_count - len(vmaf_cuda_tasks)}it on CPU")
+                for psnr_c, channel in zip(psnrs, ["R", "G", "B"]):
+                    if channel not in results[target_filename]["psnr"].keys():
+                        results[target_filename]["psnr"][channel] = {}
+                    for bayer_pattern, psnr_i in zip(bayer_patterns, psnr_c):
+                        results[target_filename]["psnr"][channel][bayer_pattern] = round(psnr_i.item(), 6)            
     except ExceptionGroup:
-        print(f"\nError found in dataset near {target_filename}")
+        print(f"\nError found in dataset around {os.path.join(target_dir, target_filename)}.")
         raise
-    # Ctrl + C
     except asyncio.exceptions.CancelledError:
         raise
     finally:
-        with open(results_file, "w") as f:
+        with open(results_filename, "w") as f:
             json.dump(results, f)
-        print(f"\nResults written to {results_file}")
+        print(f"\nVMAF:  {tasks_counter[0]}it on CUDA, {tasks_counter[1]}it on CPU.")
+        print(f"Results written to {results_filename}.")
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -5,90 +5,27 @@ import asyncio
 from pathlib import Path
 from tqdm.asyncio import tqdm
 from skimage.io import imsave
-from torchvision.transforms.functional import pad
 
-
-def psnr(
+def psnr_rgb(
         preds: torch.Tensor,
         target: torch.Tensor,
         data_range: int = 255
     ) -> torch.Tensor:
     """
-    The function calculates PSNR between batch of predictions and target given data range.
+    The function calculates PSNR of R,G,B channels between B predictions and the target.
 
     Input: preds(B, H, W, 3) and target(H, W, 3)
 
-    Return: psnr(B)
+    Return: (B, 3)
     """
     assert preds.ndim == 4
     B = preds.size(0)
     
     MSE = torch.mean(torch.pow(preds - target.expand(B, -1, -1, -1), 2),
-                     dim=(1,2,3), keepdim=True, dtype=torch.float32).squeeze((1,2,3))
-    return 10 * (2 * torch.log10(torch.full((B,), data_range, dtype=torch.float32, device=preds.device)) - torch.log10(MSE))
+                     dim=(1,2), keepdim=True, dtype=torch.float32).squeeze((1,2))
+    return 10 * (2 * torch.log10(torch.full((B, 3), data_range, dtype=torch.float32, device=preds.device)) - torch.log10(MSE))
 
-
-def ssim(
-        preds: torch.Tensor,
-        target: torch.Tensor,
-        data_range: int = 255,
-        window_size: int = 7,
-        K1: float = .01,
-        K2: float = .03
-    ) -> torch.Tensor:
-    """
-    The function calculates SSIM on Y between batch of predictions and target given data range.
-
-    Scikit-learn uses symmetric padding while torch uses reflection padding, making results vary slightly.
-    
-    From Rec.709, Y = 0.2989 * R + 0.5870 * G + 0.1140 * B
-
-    window_size: length of convolution kernel, default 7 gives padding 3, must be odd number.
-
-    Input: preds(B, H, W, 3) and target(H, W, 3)
-
-    Return: ssim(B)
-    """
-    assert preds.ndim == 4
-    assert window_size % 2 == 1
-    device = preds.device
-    B = preds.size(0)
-    padding = window_size // 2
-
-    C1 = (K1 * data_range) ** 2
-    C2 = (K2 * data_range) ** 2
-    NP = window_size * window_size
-    RGB2Y = torch.tensor((0.2989, 0.5870, 0.1140), dtype=torch.float32, device=device)
-    
-    cov_norm = NP / (NP-1.)
-    preds_y = torch.matmul(preds.float(), RGB2Y)
-    targets_y = torch.matmul(target.float(), RGB2Y).expand(B, -1, -1)
-    
-    kernel = torch.full((1, 1, window_size, window_size), 1./NP, dtype=torch.float32, device=device)
-
-    del preds, target, NP, RGB2Y
-
-    inputs = torch.cat((preds_y,
-                        targets_y,
-                        preds_y * preds_y,
-                        targets_y * targets_y,
-                        preds_y * targets_y)).unsqueeze(1)
-    ux, uy, uxx, uyy, uxy = torch.conv2d(pad(inputs, padding, padding_mode="symmetric"), kernel).split(B)
-
-    del preds_y, targets_y, kernel, inputs
-
-    vx = cov_norm * (uxx - ux * ux)
-    vy = cov_norm * (uyy - uy * uy)
-    vxy = cov_norm * (uxy - ux * uy)
-
-    S = (2 * ux * uy + C1) * (2 * vxy + C2) / ((ux * ux + uy * uy + C1) * (vx + vy + C2))
-
-    del cov_norm, ux, uy, uxx, uyy, uxy, vx, vy, vxy
-
-    return torch.mean(S[..., padding:-padding, padding:-padding], dim=(1,2,3), keepdim=True, dtype=torch.float32).squeeze((1,2,3))
-
-
-async def _vmaf_compute(
+async def _metrics_compute(
         preds_path: str,
         target_path: str,
         batch_size: int,
@@ -96,14 +33,13 @@ async def _vmaf_compute(
         libvmaf_cuda: bool = False
     ) -> list[list[float]]:
     """
-    This async function uses CPU or CUDA to calculate VMAF between batch of prediction images and target image given vmaf_versions.
+    This async function uses libvmaf or libvmaf_cuda to calculate PSNR_Y, SSIM, and VMAF between B predictions and the target given vmaf_versions.
 
-    It requires libvmaf-enabled ffmpeg in path.
+    It is a FFmpeg wrapper and requires ffmpeg binary in path.
 
-    It is intended for asyncio task instantiation.
+    Return: [[_ * B], [_ * B], [[_ * B] * len(vmaf_versions)]]
     """
     vmaf_versions_str = "|".join(["version=" + vmaf_version + "\\\\:name=" + vmaf_version for vmaf_version in vmaf_versions])
-
     target_name = Path(target_path).stem
     preds_dir = os.path.dirname(preds_path)
     log_path = os.path.join(preds_dir, target_name + ".json")
@@ -113,10 +49,10 @@ async def _vmaf_compute(
             f'''ffmpeg \
             -framerate 1 -i {preds_path} \
             -i {target_path} \
-            -filter_complex "
+            -lavfi "
                 format=yuv420p,hwupload_cuda,scale_cuda[pred]; \
                 format=yuv420p,hwupload_cuda,scale_cuda[target]; \
-                [pred][target]libvmaf_cuda='model={vmaf_versions_str}:log_path={log_path}:log_fmt=json'
+                [pred][target]libvmaf_cuda='model={vmaf_versions_str}:feature=name=psnr|name=float_ssim:log_path={log_path}:log_fmt=json'
             " \
             -f null -''',
             stderr=asyncio.subprocess.PIPE)
@@ -125,64 +61,68 @@ async def _vmaf_compute(
             f'''ffmpeg \
             -framerate 1 -i {preds_path} \
             -i {target_path} \
-            -lavfi libvmaf='model={vmaf_versions_str}:log_path={log_path}:log_fmt=json:n_threads={batch_size * 2}' \
+            -lavfi libvmaf='model={vmaf_versions_str}:feature=name=psnr|name=float_ssim:log_path={log_path}:log_fmt=json:n_threads={batch_size * 2}' \
             -f null -''',
             stderr=asyncio.subprocess.PIPE)
     _, stderr = await proc.communicate()
 
     try:
         with open(log_path, "r") as f:
-            logs = json.load(f)
+            log = json.load(f)
     except OSError:
         print(stderr.decode())
         raise
-    except json.decoder.JSONDecodeError:
-        print(stderr.decode())
-        raise
 
-    results = [[float(frame["metrics"][vmaf_version]) for vmaf_version in vmaf_versions] for frame in logs["frames"]]
-    # transpose results
-    return [list(i) for i in zip(*results)]
+    results = [[float(frame["metrics"]["psnr_y"]), float(frame["metrics"]["float_ssim"]), [float(frame["metrics"][vmaf_version])
+                    for vmaf_version in vmaf_versions]]
+                    for frame in log["frames"]]
+    results = [list(i) for i in zip(*results)]
+    results[2] = [list(i) for i in zip(*results[2])]
+    return results
 
-async def vmaf(
+async def evaluate(
         preds: torch.Tensor,
         preds_dir: str,
-        target_name: str,
-        target_ext: str,
+        target_filename: str,
         target_dir: str,
         results: dict,
         bayer_patterns: list[str],
         vmaf_versions: list[str] = ["vmaf_v0.6.1"],
         libvmaf_cuda: bool = False,
-        tqdm_iterator: tqdm = None
+        tqdm_iterator: tqdm = None,
+        keep_temp_files: bool = False
     ):
     """
-    This async function handles VMAF between batch of predictions and target using different versions of VMAF models.
+    This async function computes PSNR_Y, SSIM, and VMAF between B predictions and the target given vmaf_versions.
 
-    It saves predictions as files and deletes them after VMAF calculation.
+    It saves predictions and results logs as temporary files and deletes them after.
 
-    VMAF calculation is done in parallel to make full use of cpu and speed up.
+    Results are written to dict so there's no return value.
     """
-    assert preds.size(0) == len(bayer_patterns)
+    B = len(bayer_patterns)
+    assert preds.size(0) == B
     for vmaf_version in vmaf_versions:
         assert vmaf_version in ["vmaf_v0.6.1", "vmaf_4k_v0.6.1"]
-    batch_size = len(bayer_patterns)
-    target_filename = target_name + "." + target_ext
+    target_name = Path(target_filename).stem
 
-    preds_files = [os.path.join(preds_dir, str(i+1) + "_" + target_filename) for i in range(batch_size)]
-    for pred, pred_file in zip(preds, preds_files):
-        imsave(pred_file, pred.cpu().detach().numpy(), check_contrast=False)
+    preds_paths = [os.path.join(preds_dir, str(i+1) + "_" + target_name + ".TIF") for i in range(B)]
+    for pred, pred_path in zip(preds, preds_paths):
+        imsave(pred_path, pred.cpu().detach().numpy(), plugin="tifffile", check_contrast=False)
 
-    vmafs = await _vmaf_compute(
-        os.path.join(preds_dir, "%d_" + target_filename),
+    metrics = await _metrics_compute(
+        os.path.join(preds_dir, "%d_" + target_name + ".TIF"),
         os.path.join(target_dir, target_filename),
-        batch_size, vmaf_versions, libvmaf_cuda)
+        B, vmaf_versions, libvmaf_cuda)
+    
+    if not keep_temp_files:
+        await asyncio.create_subprocess_shell(f'''rm {" ".join(preds_paths)} {os.path.join(preds_dir, target_name + ".json")}''')
 
-    await asyncio.create_subprocess_shell(f'''rm {" ".join(preds_files)} {os.path.join(preds_dir, target_name + ".json")}''')
-
-    if "vmaf" not in results[target_filename].keys():
-        results[target_filename]["vmaf"] = {}
-    for vmaf_version, vmaf_l in zip(vmaf_versions, vmafs):
+    if "Y" not in results[target_filename]["psnr"].keys():
+        results[target_filename]["psnr"]["Y"] = {}
+    for bayer_pattern, psnr_i, ssim_i in zip(bayer_patterns, metrics[0], metrics[1]):
+        results[target_filename]["psnr"]["Y"][bayer_pattern] = psnr_i
+        results[target_filename]["ssim"][bayer_pattern] = ssim_i
+    for vmaf_version, vmaf_l in zip(vmaf_versions, metrics[2]):
         if vmaf_version not in results[target_filename]["vmaf"].keys():
             results[target_filename]["vmaf"][vmaf_version] = {}
         for bayer_pattern, vmaf_i in zip(bayer_patterns, vmaf_l):

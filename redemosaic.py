@@ -1,16 +1,13 @@
 import torch
 
-
 def redemosaic(
         rgbimg: torch.Tensor,
-        bayer_patterns: list[str] = ["gbrg", "grbg", "bggr", "rggb"]
+        bayer_patterns: list[str]
     ) -> torch.Tensor:
     """
-    The function creates redemosaiced images of any Bayer patterns given rgbimage.
-    
-    Default Bayer patterns: ("gbrg", "grbg", "bggr", "rggb")
+    The function creates redemosaiced images of B Bayer patterns given a RGB image.
 
-    Return: redemosaiced RGB images of B Bayer patterns (B, H, W, 3)
+    Return: (B, H, W, 3)
     """
     assert isinstance(rgbimg, torch.Tensor)
     for bayer_pattern in bayer_patterns:
@@ -44,12 +41,12 @@ def redemosaic(
         [0, 0, -1.5, 0, 0]
     ], dtype=torch.float32, device=device) / 8
     
-    basic_masks = torch.tensor((
-        ((1,0),(0,0)),
-        ((0,1),(0,0)),
-        ((0,0),(1,0)),
-        ((0,0),(0,1))
-    ), dtype=torch.bool, device=device).repeat(1, (H+1)//2, (W+1)//2)[:, :-1 if H % 2 == 1 else None, :-1 if W % 2 == 1 else None]
+    basic_masks = torch.tensor([
+        [[1,0],[0,0]],
+        [[0,1],[0,0]],
+        [[0,0],[1,0]],
+        [[0,0],[0,1]]
+    ], dtype=torch.bool, device=device).repeat(1, (H+1)//2, (W+1)//2)[:, :-1 if H % 2 == 1 else None, :-1 if W % 2 == 1 else None]
 
     rgbmasks_bayerpatterns = torch.zeros([len(bayer_patterns), 3, H, W], dtype=torch.bool, device=device)
     rgb_bayerpatterns = torch.zeros_like(rgbmasks_bayerpatterns, dtype=torch.float32, device=device)
@@ -64,7 +61,6 @@ def redemosaic(
 
     del basic_masks
 
-    # Gradient-corrected bilinear interpolated G at all R and B.
     rgb_bayerpatterns[:,1,:,:] = torch.where(
         torch.logical_or(rgbmasks_bayerpatterns[:,0,:,:] == 1, rgbmasks_bayerpatterns[:,2,:,:] == 1),
         torch.conv2d(torch.nn.ReflectionPad2d(2)(cfa_bayerpatterns), GR_GB[None, None, ...]).squeeze(1),
