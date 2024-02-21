@@ -49,11 +49,10 @@ Only works when libvmaf_cuda = True.
 """
 libvmaf_cuda_window_size = 8
 """
-By default, $PYTHONPATH=.
-Set input and temp directory under $PYTHONPATH
+Set relative directory for dataset and temporary storage.
 target_dir is the directory of input dataset, and preds_dir temporarily holds redemosaiced images and metrics logs.
 target_ext is the input image extension without dot, case sensitive.
-Results is stored as a JSON file under $PYTHONPATH
+Results is stored as a JSON file in current directory.
 """
 target_dir = "img"
 target_ext = "TIF"
