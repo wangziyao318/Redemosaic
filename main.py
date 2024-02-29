@@ -15,8 +15,8 @@ device = torch.device("cuda" if torch.cuda.is_available()
 """
 Given batch_size = len(bayer_patterns), hardware requirements for RAISE dataset:
     # redemosaic() + evaluate()
-    torch.device("cuda") + {libvmaf_cuda, libvmaf} with batch_size 4 requires 12G+ VRAM depends on libvmaf_cuda_window_size. Slightly faster than the setting below for large images, and is equally fast for small images.
-    torch.device("cuda") + libvmaf with batch size 4 requires >= 8G VRAM. Recommended for NVIDIA users and is at least 4 times faster than pure CPU.
+    torch.device("cuda") + {libvmaf_cuda, libvmaf} with batch_size 4 requires 16G+ VRAM depends on libvmaf_cuda_window_size. Slightly faster than the setting below for large images, and is equally fast for small images.
+    torch.device("cuda") + libvmaf with batch size 4 requires >= 12G VRAM. Recommended for NVIDIA users and is at least 4 times faster than pure CPU.
     torch.device("cpu") + libvmaf with batch size 4 requires >= 16GB RAM and a powerful CPU. Not recommended because CPU doesn't benefit from batch_size.
     torch.device("cpu") + libvmaf with batch size 1 requires >= 8GB RAM. Recommended for low-end users. Do it 4 times with different Bayer pattern and set update_results to True.
 """
@@ -148,11 +148,11 @@ async def main():
                     tasks_counter[1] += 1
                 await asyncio.sleep(0)
                 """
-                PSNR: (B).
+                PSNR: psnr(B).
                 """
                 psnr_B = peak_signal_noise_ratio(preds, target)
                 """
-                SSIM: (B).
+                SSIM: ssim(B).
                 """
                 ssim_B = structural_similarity(preds, target)
 

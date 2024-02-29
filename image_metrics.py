@@ -24,8 +24,8 @@ def peak_signal_noise_ratio(
     assert preds.ndim == 4
     B = preds.size(0)
     
-    MSE = torch.mean(torch.pow(preds - target.expand(B, -1, -1, -1), 2),
-                     dim=(1,2,3), keepdim=True, dtype=torch.float32).squeeze((1,2,3))
+    MSE = torch.mean(torch.pow(preds.float() - target.float().expand(B, -1, -1, -1), 2),
+                     dim=(1,2,3), dtype=torch.float32)
     return 10 * (2 * torch.log10(torch.full((B,), data_range, dtype=torch.float32, device=preds.device)) - torch.log10(MSE))
 
 def structural_similarity(
@@ -37,15 +37,9 @@ def structural_similarity(
         K2: float = .03
     ) -> torch.Tensor:
     """
-    The function calculates SSIM on Y between batch of predictions and target given data range.
+    The function calculates mean SSIM on RGB channels between batch of predictions and target given data range.
 
     It uses symmetric padding to be consistent with scikit-image.
-
-    It uses Rec.601 standard for color space conversion from RGB to YUV.
-
-    [Rec.601]  Y = .2989 * R + .5870 * G + .1140 * B
-    [Rec.709]  Y = .2126 * R + .7152 * G + .0722 * B
-    [Rec.2020] Y = .2627 * R + .6780 * G + .0593 * B
 
     data_range: 255 for uint8, 1 for float.
 
@@ -59,39 +53,42 @@ def structural_similarity(
     assert window_size % 2 == 1
     device = preds.device
     B = preds.size(0)
-    padding = window_size // 2
-
     C1 = (K1 * data_range) ** 2
     C2 = (K2 * data_range) ** 2
     NP = window_size * window_size
-    RGB2Y = torch.tensor((0.2989, 0.5870, 0.1140), dtype=torch.float32, device=device)
-    
     cov_norm = NP / (NP-1.)
-    preds_y = torch.matmul(preds.float(), RGB2Y)
-    targets_y = torch.matmul(target.float(), RGB2Y).expand(B, -1, -1)
-    
+    padding = (window_size - 1) // 2
+
+    preds = preds.float().permute(3,0,1,2)
+    targets = target.float().permute(2,0,1).unsqueeze(1).expand(-1, B, -1, -1)
     kernel = torch.full((1, 1, window_size, window_size), 1./NP, dtype=torch.float32, device=device)
 
-    del preds, target, NP, RGB2Y
+    del target, NP
 
-    inputs = torch.cat((preds_y,
-                        targets_y,
-                        preds_y * preds_y,
-                        targets_y * targets_y,
-                        preds_y * targets_y)).unsqueeze(1)
-    ux, uy, uxx, uyy, uxy = torch.conv2d(pad(inputs, padding, padding_mode="symmetric"), kernel).split(B)
+    results = []
+    for preds_c, targets_c in zip(preds, targets):
+        inputs = torch.cat((preds_c,
+                            targets_c,
+                            preds_c * preds_c,
+                            targets_c * targets_c,
+                            preds_c * targets_c)).unsqueeze(1)
+        ux, uy, uxx, uyy, uxy = torch.conv2d(pad(inputs, padding, padding_mode="symmetric"), kernel).split(B)
 
-    del preds_y, targets_y, kernel, inputs
+        del inputs
 
-    vx = cov_norm * (uxx - ux * ux)
-    vy = cov_norm * (uyy - uy * uy)
-    vxy = cov_norm * (uxy - ux * uy)
+        vx = cov_norm * (uxx - ux * ux)
+        vy = cov_norm * (uyy - uy * uy)
+        vxy = cov_norm * (uxy - ux * uy)
 
-    S = (2 * ux * uy + C1) * (2 * vxy + C2) / ((ux * ux + uy * uy + C1) * (vx + vy + C2))
+        del uxx, uyy, uxy
+        
+        S = (2 * ux * uy + C1) * (2 * vxy + C2) / ((ux * ux + uy * uy + C1) * (vx + vy + C2))
 
-    del cov_norm, ux, uy, uxx, uyy, uxy, vx, vy, vxy
+        results.append(torch.mean(S[..., padding:-padding, padding:-padding], dim=(1,2,3), dtype=torch.float32))
 
-    return torch.mean(S[..., padding:-padding, padding:-padding], dim=(1,2,3), keepdim=True, dtype=torch.float32).squeeze((1,2,3))
+        del ux, uy, vx, vy, vxy, S
+
+    return torch.mean(torch.stack(results), dim=0, dtype=torch.float32)
 
 async def _vmaf_compute(
         preds_path: str,
@@ -158,7 +155,7 @@ async def multi_assessment_fusion(
         keep_temp_files: bool = False
     ):
     """
-    This async function computes VMAF between B predictions and the target given vmaf_versions.
+    This async function calculates VMAF between B predictions and the target given vmaf_versions.
 
     It saves predictions and results logs as temporary files and deletes them after.
 
