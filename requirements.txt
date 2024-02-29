@@ -4,3 +4,4 @@ scikit-image
 imagecodecs
 tqdm
 matplotlib
+scikit-learn
