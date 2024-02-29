@@ -7,7 +7,7 @@ from tqdm.asyncio import tqdm
 from skimage.io import imread_collection
 
 from redemosaic import redemosaic
-from image_metrics import psnr_rgb, evaluate
+from image_metrics import peak_signal_noise_ratio, structural_similarity, multi_assessment_fusion
 
 device = torch.device("cuda" if torch.cuda.is_available()
                       else "mps" if torch.backends.mps.is_available()
@@ -54,8 +54,10 @@ target_dir is the directory of input dataset, and preds_dir temporarily holds re
 target_ext is the input image extension without dot, case sensitive.
 Results is stored as a JSON file in current directory.
 """
-target_dir = "img"
+target_dir = "real_img"
 target_ext = "TIF"
+# target_dir = "fake_img"
+# target_ext = "png"
 preds_dir = "temp"
 results_filename = "results.json"
 """
@@ -117,30 +119,46 @@ async def main():
                 for metric in ["psnr", "ssim", "vmaf"]:
                     if metric not in results[target_filename].keys():
                         results[target_filename][metric] = {}
-
+                """
+                VMAF
+                """
                 if libvmaf_cuda and len(libvmaf_cuda_tasks) < libvmaf_cuda_window_size:
                     task = tg.create_task(
-                        evaluate(preds, preds_dir, target_filename, target_dir, results, bayer_patterns, vmaf_versions, True, libvmaf_iterator, keep_temp_files)
+                        multi_assessment_fusion(
+                            preds, preds_dir,
+                            target_filename, target_dir,
+                            results,
+                            bayer_patterns, vmaf_versions,
+                            True, libvmaf_iterator, keep_temp_files
+                        )
                     )
                     libvmaf_cuda_tasks.add(task)
                     tasks_counter[0] += 1
                     task.add_done_callback(libvmaf_cuda_tasks.discard)
                 else:
                     tg.create_task(
-                        evaluate(preds, preds_dir, target_filename, target_dir, results, bayer_patterns, vmaf_versions, False, libvmaf_iterator, keep_temp_files)
+                        multi_assessment_fusion(
+                            preds, preds_dir,
+                            target_filename, target_dir,
+                            results,
+                            bayer_patterns, vmaf_versions,
+                            False, libvmaf_iterator, keep_temp_files
+                        )
                     )
                     tasks_counter[1] += 1
                 await asyncio.sleep(0)
                 """
-                PSNR on R,G,B channels: (3,B).
+                PSNR: (B).
                 """
-                psnrs = torch.t(psnr_rgb(preds, target))
+                psnr_B = peak_signal_noise_ratio(preds, target)
+                """
+                SSIM: (B).
+                """
+                ssim_B = structural_similarity(preds, target)
 
-                for psnr_c, channel in zip(psnrs, ["R", "G", "B"]):
-                    if channel not in results[target_filename]["psnr"].keys():
-                        results[target_filename]["psnr"][channel] = {}
-                    for bayer_pattern, psnr_i in zip(bayer_patterns, psnr_c):
-                        results[target_filename]["psnr"][channel][bayer_pattern] = round(psnr_i.item(), 6)            
+                for bayer_pattern, psnr, ssim in zip(bayer_patterns, psnr_B, ssim_B):
+                    results[target_filename]["psnr"][bayer_pattern] = round(psnr.item(), 6)
+                    results[target_filename]["ssim"][bayer_pattern] = round(ssim.item(), 6)
     except ExceptionGroup:
         print(f"\nError found in dataset around {os.path.join(target_dir, target_filename)}.")
         raise

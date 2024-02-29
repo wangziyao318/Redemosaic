@@ -18,10 +18,11 @@ __pycache__
 .venv
 
 # Dataset
-img
-imgfake
+*.TIF
+*.png
+real_img
+fake_img
 temp
-imgcorrupted
 
 # Results
 results.json

@@ -5,27 +5,95 @@ import asyncio
 from pathlib import Path
 from tqdm.asyncio import tqdm
 from skimage.io import imsave
+from torchvision.transforms.functional import pad
 
-def psnr_rgb(
+def peak_signal_noise_ratio(
         preds: torch.Tensor,
         target: torch.Tensor,
         data_range: int = 255
     ) -> torch.Tensor:
     """
-    The function calculates PSNR of R,G,B channels between B predictions and the target.
+    The function calculates mean PSNR of RGB channels between B predictions and the target.
+
+    data_range: 255 for uint8, 1 for float.
 
     Input: preds(B, H, W, 3) and target(H, W, 3)
 
-    Return: (B, 3)
+    Return: psnr(B)
     """
     assert preds.ndim == 4
     B = preds.size(0)
     
     MSE = torch.mean(torch.pow(preds - target.expand(B, -1, -1, -1), 2),
-                     dim=(1,2), keepdim=True, dtype=torch.float32).squeeze((1,2))
-    return 10 * (2 * torch.log10(torch.full((B, 3), data_range, dtype=torch.float32, device=preds.device)) - torch.log10(MSE))
+                     dim=(1,2,3), keepdim=True, dtype=torch.float32).squeeze((1,2,3))
+    return 10 * (2 * torch.log10(torch.full((B,), data_range, dtype=torch.float32, device=preds.device)) - torch.log10(MSE))
 
-async def _metrics_compute(
+def structural_similarity(
+        preds: torch.Tensor,
+        target: torch.Tensor,
+        data_range: int = 255,
+        window_size: int = 7,
+        K1: float = .01,
+        K2: float = .03
+    ) -> torch.Tensor:
+    """
+    The function calculates SSIM on Y between batch of predictions and target given data range.
+
+    It uses symmetric padding to be consistent with scikit-image.
+
+    It uses Rec.601 standard for color space conversion from RGB to YUV.
+
+    [Rec.601]  Y = .2989 * R + .5870 * G + .1140 * B
+    [Rec.709]  Y = .2126 * R + .7152 * G + .0722 * B
+    [Rec.2020] Y = .2627 * R + .6780 * G + .0593 * B
+
+    data_range: 255 for uint8, 1 for float.
+
+    window_size: length of convolution kernel, default 7 gives padding 3, must be odd number. Different window_size produces different results.
+
+    Input: preds(B, H, W, 3) and target(H, W, 3)
+
+    Return: ssim(B)
+    """
+    assert preds.ndim == 4
+    assert window_size % 2 == 1
+    device = preds.device
+    B = preds.size(0)
+    padding = window_size // 2
+
+    C1 = (K1 * data_range) ** 2
+    C2 = (K2 * data_range) ** 2
+    NP = window_size * window_size
+    RGB2Y = torch.tensor((0.2989, 0.5870, 0.1140), dtype=torch.float32, device=device)
+    
+    cov_norm = NP / (NP-1.)
+    preds_y = torch.matmul(preds.float(), RGB2Y)
+    targets_y = torch.matmul(target.float(), RGB2Y).expand(B, -1, -1)
+    
+    kernel = torch.full((1, 1, window_size, window_size), 1./NP, dtype=torch.float32, device=device)
+
+    del preds, target, NP, RGB2Y
+
+    inputs = torch.cat((preds_y,
+                        targets_y,
+                        preds_y * preds_y,
+                        targets_y * targets_y,
+                        preds_y * targets_y)).unsqueeze(1)
+    ux, uy, uxx, uyy, uxy = torch.conv2d(pad(inputs, padding, padding_mode="symmetric"), kernel).split(B)
+
+    del preds_y, targets_y, kernel, inputs
+
+    vx = cov_norm * (uxx - ux * ux)
+    vy = cov_norm * (uyy - uy * uy)
+    vxy = cov_norm * (uxy - ux * uy)
+
+    S = (2 * ux * uy + C1) * (2 * vxy + C2) / ((ux * ux + uy * uy + C1) * (vx + vy + C2))
+
+    del cov_norm, ux, uy, uxx, uyy, uxy, vx, vy, vxy
+
+    return torch.mean(S[..., padding:-padding, padding:-padding], dim=(1,2,3), keepdim=True, dtype=torch.float32).squeeze((1,2,3))
+
+async def _vmaf_compute(
         preds_path: str,
         target_path: str,
         batch_size: int,
@@ -33,11 +101,11 @@ async def _metrics_compute(
         libvmaf_cuda: bool = False
     ) -> list[list[float]]:
     """
-    This async function uses libvmaf or libvmaf_cuda to calculate PSNR_Y, SSIM, and VMAF between B predictions and the target given vmaf_versions.
+    This async function uses libvmaf or libvmaf_cuda to calculate VMAF between B predictions and the target given vmaf_versions.
 
     It is a FFmpeg wrapper and requires ffmpeg binary in path.
 
-    Return: [[_ * B], [_ * B], [[_ * B] * len(vmaf_versions)]]
+    Return: [[_ * B] * len(vmaf_versions)]
     """
     vmaf_versions_str = "|".join(["version=" + vmaf_version + "\\\\:name=" + vmaf_version for vmaf_version in vmaf_versions])
     target_name = Path(target_path).stem
@@ -52,7 +120,7 @@ async def _metrics_compute(
             -lavfi "
                 format=yuv420p,hwupload_cuda,scale_cuda[pred]; \
                 format=yuv420p,hwupload_cuda,scale_cuda[target]; \
-                [pred][target]libvmaf_cuda='model={vmaf_versions_str}:feature=name=psnr|name=float_ssim:log_path={log_path}:log_fmt=json'
+                [pred][target]libvmaf_cuda='model={vmaf_versions_str}:log_path={log_path}:log_fmt=json'
             " \
             -f null -''',
             stderr=asyncio.subprocess.PIPE)
@@ -61,7 +129,7 @@ async def _metrics_compute(
             f'''ffmpeg \
             -framerate 1 -i {preds_path} \
             -i {target_path} \
-            -lavfi libvmaf='model={vmaf_versions_str}:feature=name=psnr|name=float_ssim:log_path={log_path}:log_fmt=json:n_threads={batch_size * 2}' \
+            -lavfi libvmaf='model={vmaf_versions_str}:log_path={log_path}:log_fmt=json:n_threads={batch_size * 2}' \
             -f null -''',
             stderr=asyncio.subprocess.PIPE)
     _, stderr = await proc.communicate()
@@ -73,14 +141,11 @@ async def _metrics_compute(
         print(stderr.decode())
         raise
 
-    results = [[float(frame["metrics"]["psnr_y"]), float(frame["metrics"]["float_ssim"]), [float(frame["metrics"][vmaf_version])
-                    for vmaf_version in vmaf_versions]]
-                    for frame in log["frames"]]
-    results = [list(i) for i in zip(*results)]
-    results[2] = [list(i) for i in zip(*results[2])]
-    return results
+    results = [[float(frame["metrics"][vmaf_version]) for vmaf_version in vmaf_versions] for frame in log["frames"]]
 
-async def evaluate(
+    return [list(i) for i in zip(*results)]
+
+async def multi_assessment_fusion(
         preds: torch.Tensor,
         preds_dir: str,
         target_filename: str,
@@ -93,7 +158,7 @@ async def evaluate(
         keep_temp_files: bool = False
     ):
     """
-    This async function computes PSNR_Y, SSIM, and VMAF between B predictions and the target given vmaf_versions.
+    This async function computes VMAF between B predictions and the target given vmaf_versions.
 
     It saves predictions and results logs as temporary files and deletes them after.
 
@@ -109,7 +174,7 @@ async def evaluate(
     for pred, pred_path in zip(preds, preds_paths):
         imsave(pred_path, pred.cpu().detach().numpy(), plugin="tifffile", check_contrast=False)
 
-    metrics = await _metrics_compute(
+    vmaf_BV = await _vmaf_compute(
         os.path.join(preds_dir, "%d_" + target_name + ".TIF"),
         os.path.join(target_dir, target_filename),
         B, vmaf_versions, libvmaf_cuda)
@@ -117,16 +182,11 @@ async def evaluate(
     if not keep_temp_files:
         await asyncio.create_subprocess_shell(f'''rm {" ".join(preds_paths)} {os.path.join(preds_dir, target_name + ".json")}''')
 
-    if "Y" not in results[target_filename]["psnr"].keys():
-        results[target_filename]["psnr"]["Y"] = {}
-    for bayer_pattern, psnr_i, ssim_i in zip(bayer_patterns, metrics[0], metrics[1]):
-        results[target_filename]["psnr"]["Y"][bayer_pattern] = psnr_i
-        results[target_filename]["ssim"][bayer_pattern] = ssim_i
-    for vmaf_version, vmaf_l in zip(vmaf_versions, metrics[2]):
+    for vmaf_version, vmaf_B in zip(vmaf_versions, vmaf_BV):
         if vmaf_version not in results[target_filename]["vmaf"].keys():
             results[target_filename]["vmaf"][vmaf_version] = {}
-        for bayer_pattern, vmaf_i in zip(bayer_patterns, vmaf_l):
-            results[target_filename]["vmaf"][vmaf_version][bayer_pattern] = vmaf_i
+        for bayer_pattern, vmaf in zip(bayer_patterns, vmaf_B):
+            results[target_filename]["vmaf"][vmaf_version][bayer_pattern] = vmaf
     
     if tqdm_iterator is not None:
         tqdm_iterator.update(1)
