@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import ListedColormap
 
-from sklearn.datasets import make_circles, make_classification, make_moons
 from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
 from sklearn.ensemble import AdaBoostClassifier, RandomForestClassifier
 from sklearn.gaussian_process import GaussianProcessClassifier
@@ -22,6 +21,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.linear_model import LogisticRegression
 
 names = [
     "Nearest Neighbors",
@@ -32,8 +32,9 @@ names = [
     "Random Forest",
     "Neural Net",
     "AdaBoost",
-    "Naive Bayes",
-    "QDA",
+    # "Naive Bayes",
+    # "QDA",
+    "Logistic Regression",
 ]
 
 classifiers = [
@@ -47,8 +48,9 @@ classifiers = [
     ),
     MLPClassifier(alpha=1, max_iter=1000, random_state=42),
     AdaBoostClassifier(algorithm="SAMME", random_state=42),
-    GaussianNB(),
-    QuadraticDiscriminantAnalysis(),
+    # GaussianNB(),
+    # QuadraticDiscriminantAnalysis(),
+    LogisticRegression(multi_class="multinomial", max_iter=1000, random_state=42),
 ]
 
 
@@ -202,5 +204,5 @@ for ds_cnt, ds in enumerate(datasets):
         i += 1
 
 plt.tight_layout()
-plt.savefig("results/sample_classifier.pdf", format="pdf")
+plt.savefig("results/sample_classifier.svg", format="svg")
 plt.show()
