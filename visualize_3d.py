@@ -37,7 +37,7 @@ names = [
     "Logistic Regression",
 ]
 
-rdm_state = 4
+rdm_state = 2
 
 classifiers = [
     KNeighborsClassifier(3),
@@ -71,19 +71,9 @@ ssim_real = [max(results_real[img]["ssim"].values()) for img in results_real]
 vmaf_FHD_real = [max(results_real[img]["vmaf"]["vmaf_v0.6.1"].values()) for img in results_real]
 # vmaf_4K_real = [max(results_real[img]["vmaf"]["vmaf_4k_v0.6.1"].values()) for img in results_real]
 
-
-psnr_fake=[]
-ssim_fake=[]
-vmaf_FHD_fake=[]
-for img in results_fake:
-    if max(results_fake[img]["psnr"].values()) < 50:
-        psnr_fake.append(max(results_fake[img]["psnr"].values()))
-        ssim_fake.append(max(results_fake[img]["ssim"].values()))
-        vmaf_FHD_fake.append(max(results_fake[img]["vmaf"]["vmaf_v0.6.1"].values()))
-
-# psnr_fake = [max(results_fake[img]["psnr"].values()) for img in results_fake]
-# ssim_fake = [max(results_fake[img]["ssim"].values()) for img in results_fake]
-# vmaf_FHD_fake = [max(results_fake[img]["vmaf"]["vmaf_v0.6.1"].values()) for img in results_fake]
+psnr_fake = [max(results_fake[img]["psnr"].values()) for img in results_fake]
+ssim_fake = [max(results_fake[img]["ssim"].values()) for img in results_fake]
+vmaf_FHD_fake = [max(results_fake[img]["vmaf"]["vmaf_v0.6.1"].values()) for img in results_fake]
 # vmaf_4K_fake = [max(results_fake[img]["vmaf"]["vmaf_4k_v0.6.1"].values()) for img in results_fake]
 
 # get key of max values
@@ -98,20 +88,20 @@ y = np.array(y)
 
 datasets = []
 
-X = [psnr, ssim]
+X = [psnr, ssim, vmaf]
 X = [list(i) for i in zip(*X)]
 X = np.array(X)
 datasets.append((X,y))
 
-X = [psnr, vmaf]
-X = [list(i) for i in zip(*X)]
-X = np.array(X)
-datasets.append((X,y))
+# X = [psnr, vmaf]
+# X = [list(i) for i in zip(*X)]
+# X = np.array(X)
+# datasets.append((X,y))
 
-X = [ssim, vmaf]
-X = [list(i) for i in zip(*X)]
-X = np.array(X)
-datasets.append((X,y))
+# X = [ssim, vmaf]
+# X = [list(i) for i in zip(*X)]
+# X = np.array(X)
+# datasets.append((X,y))
 
 
 # psnr_T = np.array(psnr_real, dtype=np.float64)
@@ -144,7 +134,7 @@ datasets.append((X,y))
 # X += 2 * rng.uniform(size=X.shape)
 # linearly_separable = (X, y)
 
-figure = plt.figure(figsize=(27, 9))
+figure = plt.figure(figsize=(27, 3))
 i = 1
 # iterate over datasets
 for ds_cnt, ds in enumerate(datasets):
@@ -156,35 +146,40 @@ for ds_cnt, ds in enumerate(datasets):
 
     x_min, x_max = X[:, 0].min() - 0.5, X[:, 0].max() + 0.5
     y_min, y_max = X[:, 1].min() - 0.5, X[:, 1].max() + 0.5
+    z_min, z_max = X[:, 2].min() - 0.5, X[:, 2].max() + 0.5
 
     # just plot the dataset first
     cm = plt.cm.RdBu
     cm_bright = ListedColormap(["#FF0000", "#0000FF"])
-    ax = plt.subplot(len(datasets), len(classifiers) + 1, i)
+    ax = plt.subplot(len(datasets), len(classifiers) + 1, i, projection="3d")
     if ds_cnt == 0:
         ax.set_title("Input data")
     # # Plot the training points
     # ax.scatter(X_train[:, 0], X_train[:, 1], c=y_train, cmap=cm_bright, edgecolors="k")
     # # Plot the testing points
     ax.scatter(
-        X_test[:, 0], X_test[:, 1], c=y_test, cmap=cm_bright, alpha=0.6, edgecolors="k"
+        X_test[:, 0], X_test[:, 1], X_test[:, 2], c=y_test, cmap=cm_bright, alpha=0.6, edgecolors="k"
     )
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
+    ax.set_zlim(z_min, z_max)
     ax.set_xticks(())
     ax.set_yticks(())
+    ax.set_zticks(())
     i += 1
 
     # iterate over classifiers
     for name, clf in zip(names, classifiers):
-        ax = plt.subplot(len(datasets), len(classifiers) + 1, i)
+        ax = plt.subplot(len(datasets), len(classifiers) + 1, i, projection="3d")
 
         clf = make_pipeline(StandardScaler(), clf)
         clf.fit(X_train, y_train)
         score = clf.score(X_test, y_test)
-        DecisionBoundaryDisplay.from_estimator(
-            clf, X, cmap=cm, alpha=0.8, ax=ax, eps=0.5
-        )
+
+
+        # DecisionBoundaryDisplay.from_estimator(
+        #     clf, X, cmap=cm, alpha=0.5, ax=ax, eps=0.5
+        # )
 
         # Plot the training points
         # ax.scatter(
@@ -194,6 +189,7 @@ for ds_cnt, ds in enumerate(datasets):
         ax.scatter(
             X_test[:, 0],
             X_test[:, 1],
+            X_test[:, 2],
             c=y_test,
             cmap=cm_bright,
             edgecolors="k",
@@ -202,13 +198,16 @@ for ds_cnt, ds in enumerate(datasets):
 
         ax.set_xlim(x_min, x_max)
         ax.set_ylim(y_min, y_max)
+        ax.set_zlim(z_min, z_max)
         ax.set_xticks(())
         ax.set_yticks(())
+        ax.set_zticks(())
         if ds_cnt == 0:
             ax.set_title(name)
         ax.text(
             x_max - 0.3,
             y_min + 0.3,
+            z_min + 0.3,
             ("%.4f" % score).lstrip("0"),
             size=15,
             horizontalalignment="right",
@@ -216,5 +215,5 @@ for ds_cnt, ds in enumerate(datasets):
         i += 1
 
 plt.tight_layout()
-plt.savefig("results/sample_classifier_" + str(rdm_state) + ".svg", format="svg")
-# plt.show()
+plt.savefig("results/3d_classifier_" + str(rdm_state) + ".svg", format="svg")
+plt.show()

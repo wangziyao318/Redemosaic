@@ -135,5 +135,5 @@ if __name__ == "__main__":
     ax.set_zlabel("vmaf value")
     ax.set_title("psnr v ssim v vmaf")
     ax.legend()
-    plt.savefig("results/psnr_ssim_vmaf.pdf", format="pdf")
+    # plt.savefig("results/psnr_ssim_vmaf.pdf", format="pdf")
     plt.show()

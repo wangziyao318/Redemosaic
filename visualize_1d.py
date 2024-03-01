@@ -37,7 +37,7 @@ names = [
     "Logistic Regression",
 ]
 
-rdm_state = 4
+rdm_state = 1
 
 classifiers = [
     KNeighborsClassifier(3),
@@ -71,19 +71,9 @@ ssim_real = [max(results_real[img]["ssim"].values()) for img in results_real]
 vmaf_FHD_real = [max(results_real[img]["vmaf"]["vmaf_v0.6.1"].values()) for img in results_real]
 # vmaf_4K_real = [max(results_real[img]["vmaf"]["vmaf_4k_v0.6.1"].values()) for img in results_real]
 
-
-psnr_fake=[]
-ssim_fake=[]
-vmaf_FHD_fake=[]
-for img in results_fake:
-    if max(results_fake[img]["psnr"].values()) < 50:
-        psnr_fake.append(max(results_fake[img]["psnr"].values()))
-        ssim_fake.append(max(results_fake[img]["ssim"].values()))
-        vmaf_FHD_fake.append(max(results_fake[img]["vmaf"]["vmaf_v0.6.1"].values()))
-
-# psnr_fake = [max(results_fake[img]["psnr"].values()) for img in results_fake]
-# ssim_fake = [max(results_fake[img]["ssim"].values()) for img in results_fake]
-# vmaf_FHD_fake = [max(results_fake[img]["vmaf"]["vmaf_v0.6.1"].values()) for img in results_fake]
+psnr_fake = [max(results_fake[img]["psnr"].values()) for img in results_fake]
+ssim_fake = [max(results_fake[img]["ssim"].values()) for img in results_fake]
+vmaf_FHD_fake = [max(results_fake[img]["vmaf"]["vmaf_v0.6.1"].values()) for img in results_fake]
 # vmaf_4K_fake = [max(results_fake[img]["vmaf"]["vmaf_4k_v0.6.1"].values()) for img in results_fake]
 
 # get key of max values
@@ -98,20 +88,9 @@ y = np.array(y)
 
 datasets = []
 
-X = [psnr, ssim]
-X = [list(i) for i in zip(*X)]
-X = np.array(X)
-datasets.append((X,y))
-
-X = [psnr, vmaf]
-X = [list(i) for i in zip(*X)]
-X = np.array(X)
-datasets.append((X,y))
-
-X = [ssim, vmaf]
-X = [list(i) for i in zip(*X)]
-X = np.array(X)
-datasets.append((X,y))
+datasets.append((np.array(psnr).reshape(-1,1),y))
+datasets.append((np.array(ssim).reshape(-1,1),y))
+datasets.append((np.array(vmaf).reshape(-1,1),y))
 
 
 # psnr_T = np.array(psnr_real, dtype=np.float64)
@@ -154,8 +133,7 @@ for ds_cnt, ds in enumerate(datasets):
         X, y, test_size=0.4, random_state=rdm_state
     )
 
-    x_min, x_max = X[:, 0].min() - 0.5, X[:, 0].max() + 0.5
-    y_min, y_max = X[:, 1].min() - 0.5, X[:, 1].max() + 0.5
+    x_min, x_max = X.min() - 0.5, X.max() + 0.5
 
     # just plot the dataset first
     cm = plt.cm.RdBu
@@ -167,10 +145,9 @@ for ds_cnt, ds in enumerate(datasets):
     # ax.scatter(X_train[:, 0], X_train[:, 1], c=y_train, cmap=cm_bright, edgecolors="k")
     # # Plot the testing points
     ax.scatter(
-        X_test[:, 0], X_test[:, 1], c=y_test, cmap=cm_bright, alpha=0.6, edgecolors="k"
+        np.arange(X_test.shape[0]), X_test[:,0], c=y_test, cmap=cm_bright, alpha=0.6, edgecolors="k"
     )
-    ax.set_xlim(x_min, x_max)
-    ax.set_ylim(y_min, y_max)
+    ax.set_ylim(x_min, x_max)
     ax.set_xticks(())
     ax.set_yticks(())
     i += 1
@@ -182,9 +159,9 @@ for ds_cnt, ds in enumerate(datasets):
         clf = make_pipeline(StandardScaler(), clf)
         clf.fit(X_train, y_train)
         score = clf.score(X_test, y_test)
-        DecisionBoundaryDisplay.from_estimator(
-            clf, X, cmap=cm, alpha=0.8, ax=ax, eps=0.5
-        )
+        # DecisionBoundaryDisplay.from_estimator(
+        #     clf, X, cmap=cm, alpha=0.8, ax=ax, eps=0.5
+        # )
 
         # Plot the training points
         # ax.scatter(
@@ -192,29 +169,28 @@ for ds_cnt, ds in enumerate(datasets):
         # )
         # Plot the testing points
         ax.scatter(
-            X_test[:, 0],
-            X_test[:, 1],
+            np.arange(X_test.shape[0]),
+            X_test[:,0],
             c=y_test,
             cmap=cm_bright,
             edgecolors="k",
             # alpha=0.6,
         )
 
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
+        ax.set_ylim(x_min, x_max)
         ax.set_xticks(())
         ax.set_yticks(())
         if ds_cnt == 0:
             ax.set_title(name)
         ax.text(
-            x_max - 0.3,
-            y_min + 0.3,
-            ("%.4f" % score).lstrip("0"),
+            x=30,
+            y=x_max - 0.3,
+            s=("%.4f" % score).lstrip("0"),
             size=15,
             horizontalalignment="right",
         )
         i += 1
 
 plt.tight_layout()
-plt.savefig("results/sample_classifier_" + str(rdm_state) + ".svg", format="svg")
-# plt.show()
+plt.savefig("results/1d_classifier_" + str(rdm_state) + ".svg", format="svg")
+plt.show()

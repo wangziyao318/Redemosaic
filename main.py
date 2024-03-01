@@ -54,10 +54,10 @@ target_dir is the directory of input dataset, and preds_dir temporarily holds re
 target_ext is the input image extension without dot, case sensitive.
 Results is stored as a JSON file in current directory.
 """
-target_dir = "real_img"
-target_ext = "TIF"
-# target_dir = "fake_img"
-# target_ext = "png"
+# target_dir = "real_img"
+# target_ext = "TIF"
+target_dir = "fake_img"
+target_ext = "png"
 preds_dir = "temp"
 results_filename = "results.json"
 """

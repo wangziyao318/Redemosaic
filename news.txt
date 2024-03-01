@@ -1,0 +1,13 @@
+Nikon D40,
+Nikon D90,
+Nikon D7000.
+
+D40: BGGR
+D90: GBRG
+D7000: RGGB
+
+check if bayer pattern is correct
+
+remove fake blur image with psnr > 50
+
+analyze overlapping images
